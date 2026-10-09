@@ -1,3 +1,6 @@
+from datetime import timedelta
+
+from django.conf import settings
 from django.contrib import messages
 from django.core.exceptions import PermissionDenied
 from django.shortcuts import get_object_or_404, redirect, render
@@ -38,9 +41,16 @@ def lobby(request):
         auction.joined = auction.pk in joined_ids
         sections[auction.current_phase].append(auction)
 
+    recently_closed = (Auction.objects
+                       .filter(status__in=[Auction.Status.CLOSED, Auction.Status.CLOSED_NO_BIDS],
+                               closed_at__gte=now - timedelta(days=settings.AUCTION_RECENTLY_CLOSED_DAYS))
+                       .select_related("quarter", "winning_bid__participation")
+                       .order_by("-closed_at"))
+
     return render(request, "auctions/lobby.html", {
         "live": sections[Auction.Phase.LIVE] + sections[Auction.Phase.CLOSING],
         "upcoming": sorted(sections[Auction.Phase.UPCOMING], key=lambda a: a.start_time),
+        "recently_closed": recently_closed,
         "server_now": now,
     })
 

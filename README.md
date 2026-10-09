@@ -2,13 +2,17 @@
 
 A Django web application for auctioning vacant residential quarters: Excel import of
 quarters, applicant registration with emailed PDFs, URN-based account activation,
-an auction lobby, and (in progress) real-time anonymous bidding.
+an auction lobby, real-time anonymous bidding over WebSockets, automatic closure and
+winner notification.
 
 > **Training project.** Built during training at SAIL Bokaro Steel Plant. It is **not**
 > an official SAIL system. All business rules, amounts and sample data are placeholders.
 
 - Progress, decisions and assumptions: [`PROGRESS.md`](PROGRESS.md)
 - Where to change what: [`docs/HOW_TO_CHANGE.md`](docs/HOW_TO_CHANGE.md)
+- Architecture, ER and workflow diagrams: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
+- Step-by-step demo for the mentor: [`docs/DEMO_SCRIPT.md`](docs/DEMO_SCRIPT.md)
+- Production checklist: [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)
 - Original brief: [`CLAUDE.md`](CLAUDE.md)
 
 ## Setup (Windows, PowerShell)
@@ -47,11 +51,19 @@ python -c "from django.core.management.utils import get_random_secret_key as g; 
 
 ## Run
 
+Two terminals (activate the venv in each):
 ```powershell
+# terminal 1: database + web server
 .\scripts\start_postgres.ps1
 python manage.py runserver
+
+# terminal 2: background worker (closes finished auctions, sends winner emails)
+python manage.py run_auction_worker
 ```
-`runserver` uses Daphne (ASGI), so WebSockets work too.
+`runserver` uses Daphne (ASGI), so WebSockets work too. Without the worker, an auction
+still closes when someone is watching its page at the deadline, but run the worker so
+auctions always close on time. `python manage.py close_auctions` does one round and exits
+(for Windows Task Scheduler).
 - Site: http://127.0.0.1:8000/
 - Admin: http://127.0.0.1:8000/admin/
 

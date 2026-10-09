@@ -1,8 +1,8 @@
 # PROGRESS: SAIL Vacant Quarter Auction System
 
-_Last updated: 2026-10-09, end of Milestone 4_
+_Last updated: 2026-10-09, end of Milestone 5 (all proposed milestones complete)_
 
-**Test status:** 162 automated tests, all passing on PostgreSQL 17 (`python manage.py test`).
+**Test status:** 184 automated tests, all passing on PostgreSQL 17 (`python manage.py test`).
 **Before running anything:** start PostgreSQL with `.\scripts\start_postgres.ps1` (it does not auto-start).
 
 See also: `README.md` (setup/run/demo) and `docs/HOW_TO_CHANGE.md` (which file to edit for what).
@@ -102,16 +102,50 @@ See also: `README.md` (setup/run/demo) and `docs/HOW_TO_CHANGE.md` (which file t
   - The page connects and shows Live; the other bidder's bid appears instantly; a bid typed in the page is accepted.
   - Server killed: "Reconnecting…" and bidding disabled. Server restarted: auto-reconnect, and a bid missed while offline is shown, with the outbid message.
 
+## Milestone 5: Automatic closure, winner email, production settings, documentation ✅ COMPLETE
+- **Worker choice:** management commands, no extra services (Celery and APScheduler were considered; see `docs/ARCHITECTURE.md`).
+  - `run_auction_worker`: loops every `AUCTION_WORKER_INTERVAL_SECONDS` (5).
+  - `close_auctions`: one round, for Task Scheduler or cron.
+  - The worker survives errors and refreshes DB connections each round.
+- **Closure** (`auctions/closing.py` `close_auction`):
+  - Locks the auction row and re-checks that it is OPEN and past its deadline, otherwise does nothing. This makes it idempotent.
+  - Highest amount wins (earliest on a theoretical tie). With a winner: status CLOSED, `winning_bid` stored, quarter Allotted. Without bids: CLOSED_NO_BIDS, quarter Vacant.
+  - Broadcast and emails run after commit.
+  - Also triggered when a browser's countdown hits zero (consumer `sync`), so results appear within about 3 s even without the worker.
+- **DB backstops:** `quarter_won_only_once` (partial unique: one CLOSED auction per quarter); `winning_bid_matches_status`.
+- **Winner email** (`auctions/emails.py`): congratulations, quarter number, sector/location, floor, area, winning amount, bidder code, placeholder next steps, application number.
+  - Sent once: lock, check `winner_notified_at`, send, set timestamp.
+  - If sending fails, the timestamp stays empty and the worker retries. The tiny "sent but commit failed" window is documented.
+  - Loser emails are implemented and off by default (`AUCTION_NOTIFY_LOSERS`).
+- **Display:**
+  - The auction page shows a result panel ("Congratulations, you won!" or "Won by Bidder N"), hides the bid form and minimum, and shows "Bidding closed".
+  - The lobby has a "Recently closed" section (codes only).
+  - The admin list shows the result by code, with actions "Close now if due" and "Send result emails (unsent only)".
+- **Production settings** (on automatically when `DEBUG=False`): https redirect, secure cookies, HSTS (30 days), optional proxy header, `CSRF_TRUSTED_ORIGINS`, 8-hour sessions, HttpOnly cookies, Redis cache when `REDIS_URL` is set, console logging for app errors. `check --deploy` leaves only 2 optional HSTS warnings (subdomains/preload, policy decisions).
+- **Documentation:**
+  - `docs/ARCHITECTURE.md`: architecture, ER, workflow and bid-sequence diagrams (Mermaid), DB rules, design reasons.
+  - `docs/DEMO_SCRIPT.md`: about 15 minutes, step by step, with likely questions.
+  - `docs/DEPLOYMENT.md`: production checklist.
+  - README and HOW_TO_CHANGE updated.
+- **Tests:**
+  - `test_closing.py`: rules, no-bid outcome, idempotency, cancelled, DB refuses a double award, winner email contents, failed-email retry sends once, losers on/off, commands, worker resilience, result pages.
+  - `test_concurrency.py`: 8 simultaneous closers close once with one email; bids racing the deadline keep winner = highest and no bid after the deadline. **Verified the closer test FAILS (2 closures) without the lock.**
+  - `test_consumers.py`: a sync after the deadline closes the auction and pushes the result to every tab.
+- **Real-browser end-to-end** (no worker running):
+  - Bids in the final seconds extended the deadline (21:09:19 → 21:09:29) and showed the notice.
+  - The countdown turned red; at the deadline the page switched to Closed with "Congratulations, you won!".
+  - Exactly one winner email was written. The losing bidder's page shows "Won by Bidder 1" and "Bidding closed".
+
 ## Current problems
 - None known.
 - PostgreSQL is a portable install and **must be started after every reboot** (`scripts\start_postgres.ps1`). The portable binaries are not code-signed (normal for EnterpriseDB's zip); they were downloaded over HTTPS from EnterpriseDB, the source postgresql.org links to.
 - Redis is not installed. It isn't needed for one server process; it's required for multi-process production (`REDIS_URL`).
-- The browser display of an anti-snipe extension is covered by unit tests on the server side, but wasn't exercised in the real-browser run.
-- Auctions whose deadline has passed stay "Closing" until the closure job exists (Milestone 5).
+- The worker must be running (or a browser watching) for auctions to close at their deadline. In production, run it as a service.
 - Registration has no CAPTCHA or rate limiting (out of scope for now; worth adding before any public deployment).
 - The registration form says "email already registered", which reveals that an email address is registered. Accepted for usability; revisit if the mentor considers it a privacy issue.
-- `manage.py check --deploy` shows 5 warnings (DEBUG, HTTPS, secure cookies, HSTS). Expected in development; production settings are planned for Milestone 5.
-- The rate-limit counters use the in-memory cache: per process, and reset on restart. Switch CACHES to Redis for production.
+- `manage.py check --deploy` in production mode shows 2 optional warnings (HSTS subdomains/preload). These are policy decisions for the real domain.
+- Without `REDIS_URL`, rate-limit counters and WebSocket groups are per process (fine for one process; production needs Redis).
+- An applicant can currently win several quarters (open question 8, out of scope).
 
 ## Assumptions (placeholders, NOT official SAIL rules)
 - URN = system-generated random 7-digit number, stored as text (open question 1).
@@ -134,6 +168,9 @@ See also: `README.md` (setup/run/demo) and `docs/HOW_TO_CHANGE.md` (which file t
 - Bidder codes are numbered in join order per auction ("Bidder 1, 2, …").
 - Staff may watch an auction page live but cannot bid.
 - Admins may cancel an auction even after bids were placed; the bids are kept for audit.
+- No valid bids: status CLOSED_NO_BIDS and the quarter goes back to Vacant (open question 7).
+- Losing bidders are not emailed unless `AUCTION_NOTIFY_LOSERS=True` (open question 9).
+- Winner email "next steps" are placeholder text.
 - All sample figures are fake.
 
 ## Decisions made
@@ -144,7 +181,7 @@ See also: `README.md` (setup/run/demo) and `docs/HOW_TO_CHANGE.md` (which file t
 - Applicant `__str__` shows only the application number.
 - **Registration is general, not per quarter** (confirmed by user, 2026-10-09). Quarter choice happens in the lobby after login. Applicant ↔ Auction link = Participation (Milestone 4).
 - **The URN is delivered only by email** (in the Intimation Slip), never on screen, so email + URN at activation proves control of the mailbox.
-- Email is sent synchronously after saving. A background queue isn't needed yet; reconsider when the background worker is chosen in Milestone 5.
+- Registration email is sent synchronously after saving. The admin can resend it if it fails.
 
 - Auction status stores only facts the clock can't provide. Upcoming / Live / Closing is computed (no job needed to flip states).
 - Business actions live in `services.py` / model methods. Views stay thin.
@@ -152,12 +189,12 @@ See also: `README.md` (setup/run/demo) and `docs/HOW_TO_CHANGE.md` (which file t
 - Bid rules live in one function (`place_bid`), and browser messages are built in one module (`realtime.py`), so the rules and the privacy guarantee are each in one place.
 - Synchronous consumer (runs in a thread), so it can use the ORM like a normal view.
 - Bidder codes are stored as a number (`bidder_number`) and displayed as "Bidder N". The brief's "unique (auction, anonymous_code)" is enforced as unique (auction, bidder_number).
+- Worker = plain management command (no Celery/Redis requirement). Closure is idempotent, so running two workers, or a worker plus a browser trigger, is safe.
+- Closure is also triggered by a watching browser at the deadline, for an immediate result.
 
-## Next steps: Milestone 5
-1. Background closure job: find OPEN auctions past end_time and close them atomically and idempotently (lock, re-check, set CLOSED / CLOSED_NO_BIDS, store winner, quarter → Allotted only with a winner). Choose the scheduler (explain options).
-2. Winner email, exactly once (guard against duplicates). Loser emails off by default.
-3. Broadcast the closure to open pages; show results in the lobby ("Recently closed").
-4. Tests: idempotency with simultaneous closers, no-bid outcome, email once.
-5. Production settings (HTTPS, secure cookies, HSTS, Redis cache/channel layer), documentation (architecture, ER and workflow diagrams, demo script).
-
-Open questions to confirm with the mentor: is the EMD one payment for any quarter, or one per quarter? Can one person bid on several quarters at once?
+## Next steps (after the five proposed milestones)
+1. **Ask the mentor** about the open questions in CLAUDE.md section 12, especially: EMD (one for all quarters or one per quarter?), the Base Rate unit, whether one person may win several quarters, the official increment and extension values, record retention, and the approved deployment environment.
+2. Replace placeholder texts (SBI Collect instructions, winner "next steps", auction title/reference, EMD amount) with official wording once provided.
+3. Before any real deployment: CAPTCHA or rate limit on registration, Redis, HTTPS proxy, backups (see `docs/DEPLOYMENT.md`).
+4. Project report: use `docs/ARCHITECTURE.md` (diagrams can be exported from https://mermaid.live) and `docs/DEMO_SCRIPT.md`.
+5. Optional improvements: admin dashboard of live auctions; CSV export of bid history for audits; SAIL-supplied URN import if URNs come from SAIL (open question 1).

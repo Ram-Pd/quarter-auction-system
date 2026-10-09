@@ -132,13 +132,24 @@ class Auction(models.Model):
         max_digits=12, decimal_places=2, null=True, blank=True, editable=False,
         help_text="Kept up to date by the bidding code (auctions/bidding.py).",
     )
+    # --- Final result, written once by auctions/closing.py ---
+    winning_bid = models.OneToOneField(
+        "Bid", on_delete=models.PROTECT, null=True, blank=True, editable=False,
+        related_name="won_auction",
+        help_text="The highest valid bid when the auction closed. Empty if there were no bids.",
+    )
+    closed_at = models.DateTimeField(null=True, blank=True, editable=False)
+    winner_notified_at = models.DateTimeField(
+        null=True, blank=True, editable=False,
+        help_text="When the winner email was sent. Set once; prevents duplicate emails.")
+    losers_notified_at = models.DateTimeField(null=True, blank=True, editable=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         ordering = ["start_time"]
         indexes = [
-            # The closure job (Milestone 5) looks for OPEN auctions past end_time.
+            # The closure job (auctions/closing.py) looks for OPEN auctions past end_time.
             models.Index(fields=["status", "end_time"], name="auction_status_end_idx"),
         ]
         constraints = [
@@ -162,6 +173,20 @@ class Auction(models.Model):
                 condition=Q(status="OPEN"),
                 name="one_open_auction_per_quarter",
                 violation_error_message="This quarter already has an open auction.",
+            ),
+            # Last line of defence: a quarter can be WON only once, ever.
+            models.UniqueConstraint(
+                fields=["quarter"],
+                condition=Q(status="CLOSED"),
+                name="quarter_won_only_once",
+                violation_error_message="This quarter has already been won in another auction.",
+            ),
+            # "Closed - won" always has a winning bid; every other status has none.
+            models.CheckConstraint(
+                condition=(Q(status="CLOSED", winning_bid__isnull=False)
+                           | (~Q(status="CLOSED") & Q(winning_bid__isnull=True))),
+                name="winning_bid_matches_status",
+                violation_error_message="Only a closed-won auction has a winning bid.",
             ),
         ]
 
@@ -218,6 +243,11 @@ class Auction(models.Model):
         if now < self.end_time:
             return self.Phase.LIVE
         return self.Phase.CLOSING
+
+    @property
+    def winner_participation(self):
+        """The winning Participation (who won, internally), or None."""
+        return self.winning_bid.participation if self.winning_bid_id else None
 
     @property
     def minimum_next_bid(self):

@@ -6,6 +6,7 @@ from django.template.response import TemplateResponse
 from django.urls import path, reverse
 
 from . import realtime
+from .closing import close_auction, send_pending_notifications
 from .forms import QuarterImportForm
 from .importers import EXPECTED_HEADERS, import_quarters
 from .models import Auction, Bid, Participation, Quarter
@@ -77,11 +78,11 @@ class BidInline(admin.TabularInline):
 @admin.register(Auction)
 class AuctionAdmin(admin.ModelAdmin):
     list_display = ("__str__", "quarter", "start_time", "end_time", "phase_display",
-                    "min_increment", "current_highest_bid")
+                    "current_highest_bid", "result_display")
     list_filter = ("status",)
     search_fields = ("quarter__quarter_no",)
     date_hierarchy = "start_time"
-    actions = ["cancel_auctions"]
+    actions = ["cancel_auctions", "close_if_due", "send_result_emails"]
 
     # Fields that may no longer change once bidding has started (fairness).
     LOCKED_AFTER_START = ("start_time", "min_increment", "anti_snipe_extension")
@@ -89,6 +90,15 @@ class AuctionAdmin(admin.ModelAdmin):
     @admin.display(description="Phase")
     def phase_display(self, obj):
         return obj.phase().label
+
+    @admin.display(description="Result")
+    def result_display(self, obj):
+        # Anonymous code only; the identity is in Participation (superusers).
+        if obj.status == Auction.Status.CLOSED:
+            return f"Rs. {obj.winning_bid.amount:,.2f} by {obj.winning_bid.participation.anonymous_code}"
+        if obj.status == Auction.Status.CLOSED_NO_BIDS:
+            return "No bids"
+        return "-"
 
     def get_readonly_fields(self, request, obj=None):
         always = ["status", "current_highest_bid", "original_end_time", "created_at", "updated_at"]
@@ -132,6 +142,24 @@ class AuctionAdmin(admin.ModelAdmin):
         if skipped:
             self.message_user(request, f"Skipped {skipped} auction(s) that were not open.",
                               messages.WARNING)
+
+    @admin.action(description="Close selected auctions now (only if their deadline has passed)")
+    def close_if_due(self, request, queryset):
+        closed = [r for r in (close_auction(a.pk) for a in queryset) if r.closed_now]
+        self.message_user(request, f"Closed {len(closed)} auction(s). Auctions not yet due or "
+                                   "already closed were left unchanged.", messages.SUCCESS)
+
+    @admin.action(description="Send result emails (only those not sent yet)")
+    def send_result_emails(self, request, queryset):
+        for auction in queryset.filter(status=Auction.Status.CLOSED):
+            send_pending_notifications(auction.pk)
+        unsent = queryset.filter(status=Auction.Status.CLOSED, winner_notified_at__isnull=True).count()
+        if unsent:
+            self.message_user(request, f"{unsent} winner email(s) could not be sent. Check the email "
+                                       "settings and the server log.", messages.ERROR)
+        else:
+            self.message_user(request, "All winner emails for the selected auctions have been sent.",
+                              messages.SUCCESS)
 
 
 @admin.register(Bid)

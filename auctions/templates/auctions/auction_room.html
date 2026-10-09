@@ -23,6 +23,25 @@
       </table>
     </div>
 
+    {# Final result: shown once the auction is closed or cancelled (auction_room.js keeps it current). #}
+    <div id="result" class="card result-panel" {% if not initial_state.result %}hidden{% endif %}>
+      {% with r=initial_state.result %}
+        {% if r.outcome == "won" %}
+          {% if participation and r.bidder == participation.anonymous_code %}
+            <h2>Congratulations, you won!</h2>
+            <p>Your bid of <strong>Rs. {{ r.amount|floatformat:2|intcomma }}</strong> was the highest. Details have been emailed to you.</p>
+          {% else %}
+            <h2>Auction closed</h2>
+            <p>Won by <strong>{{ r.bidder }}</strong> with <strong>Rs. {{ r.amount|floatformat:2|intcomma }}</strong>.</p>
+          {% endif %}
+        {% elif r.outcome == "no_bids" %}
+          <h2>Auction closed</h2><p>No valid bids were placed. The quarter remains vacant.</p>
+        {% elif r.outcome == "cancelled" %}
+          <h2>Auction cancelled</h2><p>This auction was cancelled by the auction office.</p>
+        {% endif %}
+      {% endwith %}
+    </div>
+
     <div class="card live-panel">
       <div class="live-row">
         <div><div class="muted">Status</div><span id="phase" class="badge badge-{{ phase|lower }}">{{ phase.label }}</span></div>
@@ -31,7 +50,7 @@
       <div class="live-row">
         <div><div class="muted">Highest bid</div>
           <div id="highest" class="big">{% if auction.current_highest_bid %}Rs. {{ auction.current_highest_bid|floatformat:2|intcomma }}{% else %}No bids yet{% endif %}</div></div>
-        <div><div class="muted">Minimum next bid</div>
+        <div id="minimum-block" {% if initial_state.result %}hidden{% endif %}><div class="muted">Minimum next bid</div>
           <div id="minimum" class="big">Rs. {{ auction.minimum_next_bid|floatformat:2|intcomma }}</div></div>
       </div>
       <div id="extended-note" class="muted" hidden>Deadline extended because of a last-minute bid.</div>
@@ -44,6 +63,11 @@
   <div>
     <div class="card">
       {% if participation %}
+        <div id="bidding-closed" {% if not initial_state.result %}hidden{% endif %}>
+          <h2>Bidding closed</h2>
+          <p class="muted">You were <strong>{{ participation.anonymous_code }}</strong> in this auction.</p>
+        </div>
+        <div id="bid-panel" {% if initial_state.result %}hidden{% endif %}>
         <h2>Place a bid</h2>
         <p class="muted">You are <strong id="you">{{ participation.anonymous_code }}</strong> in this auction.
           Other bidders only see this code.</p>
@@ -54,6 +78,7 @@
           <button id="bid-button" type="submit" class="btn" disabled>Place bid</button>
           <button id="bid-min" type="button" class="btn btn-secondary" disabled>Use minimum</button>
         </form>
+        </div>
         <div id="bid-message" class="bid-message" role="status" aria-live="polite"></div>
       {% elif can_join %}
         <h2>Join this auction</h2>
@@ -94,6 +119,7 @@
 
 {% block scripts %}
   {% if participation or is_watcher %}
+    {# PRIVACY: initial_state is built by auctions/realtime.py: codes and amounts only. #}
     {{ initial_state|json_script:"initial-state" }}
     <script src="{% static 'auctions/auction_room.js' %}"
             data-ws-path="/ws/auctions/{{ auction.pk }}/"></script>

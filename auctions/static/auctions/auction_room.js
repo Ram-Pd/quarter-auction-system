@@ -28,7 +28,8 @@
     highest: el("highest"), minimum: el("minimum"), deadline: el("deadline"),
     extended: el("extended-note"), connection: el("connection"), bids: el("bids"),
     form: el("bid-form"), amount: el("bid-amount"), button: el("bid-button"),
-    minButton: el("bid-min"), message: el("bid-message")
+    minButton: el("bid-min"), message: el("bid-message"), result: el("result"),
+    bidPanel: el("bid-panel"), biddingClosed: el("bidding-closed"), minimumBlock: el("minimum-block")
   };
 
   var socket = null;
@@ -95,9 +96,43 @@
     if (previousDeadline && state.end_time !== previousDeadline && s.extended) {
       ui.extended.hidden = false;
     }
+    drawResult(state.result);
     suggestMinimum();
     tick();
     refreshControls();
+  }
+
+  function drawResult(result) {
+    // Same wording as the server-rendered panel in auction_room.html.
+    var finished = Boolean(result);
+    if (ui.bidPanel) { ui.bidPanel.hidden = finished; }
+    if (ui.biddingClosed) { ui.biddingClosed.hidden = !finished; }
+    if (ui.minimumBlock) { ui.minimumBlock.hidden = finished; }
+    if (!ui.result) { return; }
+    if (!result) { ui.result.hidden = true; return; }
+    var title, text;
+    if (result.outcome === "won" && result.bidder === state.you) {
+      title = "Congratulations, you won!";
+      text = "Your bid of " + rupees(result.amount) + " was the highest. Details have been emailed to you.";
+    } else if (result.outcome === "won") {
+      title = "Auction closed";
+      text = "Won by " + result.bidder + " with " + rupees(result.amount) + ".";
+    } else if (result.outcome === "no_bids") {
+      title = "Auction closed";
+      text = "No valid bids were placed. The quarter remains vacant.";
+    } else {
+      title = "Auction cancelled";
+      text = "This auction was cancelled by the auction office.";
+    }
+    ui.result.innerHTML = "";
+    var h = document.createElement("h2");
+    h.textContent = title;
+    var p = document.createElement("p");
+    p.textContent = text;
+    ui.result.appendChild(h);
+    ui.result.appendChild(p);
+    ui.result.hidden = false;
+    if (ui.message && result.outcome !== "won") { ui.message.textContent = ""; }
   }
 
   function suggestMinimum() {
@@ -206,7 +241,7 @@
     socket.onopen = function () {
       connected = true;
       retryDelay = 1000;
-      setConnection("Live", "conn-ok");
+      setConnection("Connected", "conn-ok");
       refreshControls();
     };
 

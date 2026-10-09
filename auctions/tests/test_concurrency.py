@@ -10,14 +10,19 @@ TransactionTestCase is used (not TestCase) because TestCase wraps each test in
 one transaction that other connections can't see.
 """
 import threading
+import time
 import uuid
+from datetime import timedelta
 from decimal import Decimal
 from unittest import skipUnless
 
+from django.core import mail
 from django.db import connection
 from django.test import TransactionTestCase
+from django.utils import timezone
 
 from auctions.bidding import BidRejected, place_bid
+from auctions.closing import close_auction
 from auctions.models import Auction, Bid
 from auctions.tests.factories import make_auction, make_bidder
 
@@ -126,3 +131,63 @@ class AuctionStatusUnchangedTests(TransactionTestCase):
     """Sanity check that TransactionTestCase data is cleaned between tests."""
     def test_starts_empty(self):
         self.assertEqual(Auction.objects.count(), 0)
+
+
+@skipUnless(connection.vendor == "postgresql", "Row locking needs PostgreSQL")
+class SimultaneousClosureTests(TransactionTestCase):
+
+    def test_many_closers_at_once_close_exactly_once(self):
+        auction = make_auction()
+        bidder = make_bidder(auction, 1)[0]
+        place_bid(auction.pk, bidder, "4500", uuid.uuid4())
+        Auction.objects.filter(pk=auction.pk).update(end_time=timezone.now() - timedelta(seconds=1))
+
+        results = run_simultaneously([lambda: close_auction(auction.pk) for _ in range(8)])
+
+        self.assertEqual([type(r) for r in results if isinstance(r, Exception)], [])
+        self.assertEqual(sum(r.closed_now for r in results), 1)
+        auction.refresh_from_db()
+        self.assertEqual(auction.status, Auction.Status.CLOSED)
+        self.assertEqual(len(mail.outbox), 1)          # exactly one winner email
+        self.assertIsNotNone(auction.winner_notified_at)
+
+    def test_bids_racing_the_deadline_stay_consistent(self):
+        """Bidders keep bidding while a closer keeps trying to close at the deadline."""
+        auction = make_auction(anti_snipe_extension=timedelta(0))  # no extensions in this test
+        bidders = [make_bidder(auction, n)[0] for n in range(1, 7)]
+        # Everyone has joined; now the deadline is 1 second away.
+        Auction.objects.filter(pk=auction.pk).update(end_time=timezone.now() + timedelta(seconds=1))
+
+        def keep_bidding(applicant):
+            def job():
+                accepted = 0
+                for _ in range(40):
+                    current = Auction.objects.get(pk=auction.pk)
+                    try:
+                        place_bid(auction.pk, applicant, str(current.minimum_next_bid), uuid.uuid4())
+                        accepted += 1
+                    except BidRejected as rejected:
+                        if rejected.code == "closed":
+                            break
+                    time.sleep(0.02)
+                return accepted
+            return job
+
+        def keep_closing():
+            for _ in range(200):
+                if close_auction(auction.pk).closed_now:
+                    return "closed"
+                time.sleep(0.01)
+            return "never closed"
+
+        results = run_simultaneously([keep_bidding(a) for a in bidders] + [keep_closing])
+        self.assertEqual(results[-1], "closed")
+        self.assertEqual([r for r in results if isinstance(r, Exception)], [])
+
+        auction.refresh_from_db()
+        bids = list(Bid.objects.filter(auction=auction))
+        self.assertTrue(bids, "some bids should have been accepted before the deadline")
+        highest = max(bids, key=lambda b: b.amount)
+        self.assertEqual(auction.status, Auction.Status.CLOSED)
+        self.assertEqual(auction.winning_bid, highest)                      # winner = highest bid
+        self.assertTrue(all(b.created_at < auction.end_time for b in bids))  # nothing after deadline

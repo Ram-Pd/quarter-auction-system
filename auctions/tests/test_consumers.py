@@ -4,15 +4,17 @@ browser tab that connects, sends JSON and reads what the server pushes.
 """
 import json
 import uuid
+from datetime import timedelta
 
 from asgiref.sync import sync_to_async
 from channels.routing import URLRouter
 from channels.testing import WebsocketCommunicator
 from django.contrib.auth.models import AnonymousUser, User
 from django.test import TransactionTestCase, override_settings
+from django.utils import timezone
 
 from accounts.tests.factories import make_activated_applicant
-from auctions.models import Bid
+from auctions.models import Auction, Bid
 from auctions.routing import websocket_urlpatterns
 from auctions.tests.factories import make_auction, make_bidder, make_quarter
 
@@ -194,3 +196,34 @@ class ConsumerTests(TransactionTestCase):
         message = await communicator.receive_json_from()
         self.assertEqual((message["type"], message["phase"]), ("state", "CANCELLED"))
         await communicator.disconnect()
+
+    async def test_sync_after_deadline_closes_and_pushes_result(self):
+        tab_a, tab_b = tab(self.user_a, self.auction), tab(self.user_b, self.auction)
+        await tab_a.connect()
+        await tab_b.connect()
+        await tab_a.receive_json_from()
+        await tab_b.receive_json_from()
+        await tab_a.send_json_to(bid_message("4500"))
+        await tab_a.receive_json_from()
+        await tab_a.receive_json_from()
+        await tab_b.receive_json_from()
+
+        # Time passes: the deadline is now in the past.
+        await sync_to_async(Auction.objects.filter(pk=self.auction.pk).update)(
+            end_time=timezone.now() - timedelta(seconds=1))
+
+        # Bidder B's countdown hit zero, so the page asks for a resync.
+        await tab_b.send_json_to({"type": "sync"})
+        b_msgs = [await tab_b.receive_json_from(), await tab_b.receive_json_from()]
+        snapshot = next(m for m in b_msgs if m["type"] == "snapshot")
+        self.assertEqual(snapshot["phase"], "CLOSED")
+        self.assertEqual(snapshot["result"], {"outcome": "won", "bidder": "Bidder 1", "amount": "4500.00"})
+
+        # Bidder A (the winner) is told too, without asking.
+        pushed = await tab_a.receive_json_from()
+        self.assertEqual((pushed["type"], pushed["phase"]), ("state", "CLOSED"))
+        self.assertEqual(pushed["result"]["bidder"], "Bidder 1")
+        self.assertNotIn(self.a.name, json.dumps(b_msgs + [pushed]))
+
+        await tab_a.disconnect()
+        await tab_b.disconnect()

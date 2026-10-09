@@ -3,7 +3,8 @@ WebSocket consumer: one instance per open browser tab on an auction page.
 
 Messages FROM the browser (JSON):
     {"type": "bid", "amount": "4600", "client_bid_id": "<uuid>"}
-    {"type": "sync"}                      -> asks for a fresh snapshot
+    {"type": "sync"}                      -> asks for a fresh snapshot (and closes the
+                                             auction if its deadline has passed)
 
 Messages TO the browser (JSON), all built in auctions/realtime.py:
     {"type": "snapshot", ...}             -> on connect and on "sync"
@@ -26,6 +27,7 @@ from accounts.models import Applicant
 
 from . import realtime
 from .bidding import BidRejected, place_bid
+from .closing import close_auction
 from .models import Auction, Participation
 
 logger = logging.getLogger(__name__)
@@ -81,6 +83,12 @@ class AuctionConsumer(JsonWebsocketConsumer):
             self.handle_bid(content)
         elif kind == "sync":
             auction = Auction.objects.select_related("quarter").get(pk=self.auction_id)
+            if auction.phase() == Auction.Phase.CLOSING:
+                # Deadline passed: close it now rather than wait for the worker.
+                # Safe even if the worker does the same at this moment (idempotent).
+                close_auction(auction.pk)
+                auction = Auction.objects.select_related("quarter", "winning_bid__participation").get(
+                    pk=self.auction_id)
             self.send_json(realtime.snapshot(auction, self.participation))
         else:
             self.send_json({"type": "error", "message": "Unknown message."})

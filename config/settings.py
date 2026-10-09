@@ -35,6 +35,25 @@ SECRET_KEY = env('SECRET_KEY')
 DEBUG = env('DEBUG')
 
 ALLOWED_HOSTS = env('ALLOWED_HOSTS')
+# Full origins (scheme + host) allowed to POST forms, e.g. https://auction.example.org
+CSRF_TRUSTED_ORIGINS = env.list('CSRF_TRUSTED_ORIGINS', default=[])
+
+# -----------------------------------------------------------------------------
+# Production security: switched on automatically whenever DEBUG is False.
+# See docs/DEPLOYMENT.md.
+# -----------------------------------------------------------------------------
+if not DEBUG:
+    SECURE_SSL_REDIRECT = env.bool('SECURE_SSL_REDIRECT', default=True)   # http -> https
+    SESSION_COOKIE_SECURE = True    # session cookie only sent over https
+    CSRF_COOKIE_SECURE = True
+    # Browsers remember "this site is https-only". Start small; raise once https is stable.
+    SECURE_HSTS_SECONDS = env.int('SECURE_HSTS_SECONDS', default=60 * 60 * 24 * 30)
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = env.bool('SECURE_HSTS_INCLUDE_SUBDOMAINS', default=False)
+    # Set when a reverse proxy (nginx, IIS) terminates https and forwards plain http.
+    if env.bool('BEHIND_HTTPS_PROXY', default=False):
+        SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+SESSION_COOKIE_HTTPONLY = True     # JavaScript can't read the session cookie
+SESSION_COOKIE_AGE = 60 * 60 * 8   # log out after 8 hours
 
 
 # Application definition
@@ -98,6 +117,23 @@ if REDIS_URL:
     }
 else:
     CHANNEL_LAYERS = {'default': {'BACKEND': 'channels.layers.InMemoryChannelLayer'}}
+
+# Cache: used for login/activation rate limiting. With Redis, all server
+# processes share the counters; without it each process counts separately.
+if REDIS_URL:
+    CACHES = {'default': {'BACKEND': 'django.core.cache.backends.redis.RedisCache', 'LOCATION': REDIS_URL}}
+
+# Logging: errors from our apps (e.g. failed emails, worker problems) go to the console.
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {'plain': {'format': '{asctime} {levelname} {name}: {message}', 'style': '{'}},
+    'handlers': {'console': {'class': 'logging.StreamHandler', 'formatter': 'plain'}},
+    'loggers': {
+        'accounts': {'handlers': ['console'], 'level': 'INFO'},
+        'auctions': {'handlers': ['console'], 'level': 'INFO'},
+    },
+}
 
 
 # Database
@@ -201,3 +237,11 @@ AUCTION_ANTI_SNIPE_WINDOW_SECONDS = env.int('AUCTION_ANTI_SNIPE_WINDOW_SECONDS',
 AUCTION_BID_MIN_INTERVAL_SECONDS = env.float('AUCTION_BID_MIN_INTERVAL_SECONDS', default=1.0)
 # How many recent bids the auction page shows.
 AUCTION_RECENT_BIDS_SHOWN = 20
+
+# Closure (auctions/closing.py) and notifications (auctions/emails.py).
+# How often "python manage.py run_auction_worker" checks for finished auctions.
+AUCTION_WORKER_INTERVAL_SECONDS = env.int('AUCTION_WORKER_INTERVAL_SECONDS', default=5)
+# Email the bidders who did not win (CLAUDE.md open question 9: off by default).
+AUCTION_NOTIFY_LOSERS = env.bool('AUCTION_NOTIFY_LOSERS', default=False)
+# How long closed auctions stay in the lobby's "Recently closed" list.
+AUCTION_RECENTLY_CLOSED_DAYS = 7

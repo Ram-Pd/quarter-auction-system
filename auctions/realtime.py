@@ -35,12 +35,25 @@ def public_bid(bid):
     }
 
 
+def auction_result(auction):
+    """The final result as the public may see it: code and amount, never a name."""
+    if auction.status == Auction.Status.CLOSED:
+        return {"outcome": "won", "bidder": auction.winning_bid.participation.anonymous_code,
+                "amount": _money(auction.winning_bid.amount)}
+    if auction.status == Auction.Status.CLOSED_NO_BIDS:
+        return {"outcome": "no_bids"}
+    if auction.status == Auction.Status.CANCELLED:
+        return {"outcome": "cancelled"}
+    return None
+
+
 def auction_state(auction):
     """The live numbers every watcher needs (sent with every update)."""
     return {
         "auction_id": auction.pk,
         "phase": auction.phase().value,
         "phase_label": auction.phase().label,
+        "result": auction_result(auction),
         "highest_bid": _money(auction.current_highest_bid),
         "minimum_next_bid": _money(auction.minimum_next_bid),
         "min_increment": _money(auction.min_increment),

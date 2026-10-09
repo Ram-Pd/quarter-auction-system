@@ -26,6 +26,9 @@ under **PROJECT SETTINGS**.
 | Minimum gap between bids from one browser tab | `AUCTION_BID_MIN_INTERVAL_SECONDS=1.0` | 1.0 |
 | Redis for WebSockets across several processes | `REDIS_URL=redis://localhost:6379/0` | In-memory (one process) |
 
+Production-only values (see `docs/DEPLOYMENT.md`): `DEBUG=False`, `CSRF_TRUSTED_ORIGINS`,
+`BEHIND_HTTPS_PROXY`, `SECURE_SSL_REDIRECT`, `SECURE_HSTS_SECONDS`, `SECURE_HSTS_INCLUDE_SUBDOMAINS`.
+
 In `config/settings.py` (not in `.env`):
 - `PASSWORD_RESET_TIMEOUT`: reset link lifetime in seconds. The pages and email update automatically.
 - `TIME_ZONE`: currently `Asia/Kolkata`.
@@ -51,6 +54,17 @@ In `config/settings.py` (not in `.env`):
 | Joining an auction / how "Bidder N" codes are assigned | `auctions/bidding.py`: `join_auction()` |
 | Accepted amount format (decimals, max) | `auctions/bidding.py`: `parse_amount()` |
 | How many recent bids are shown | `config/settings.py`: `AUCTION_RECENT_BIDS_SHOWN` |
+
+## 2a. Closing auctions and result emails
+
+| What | Where |
+|---|---|
+| How the winner is chosen / what happens to the quarter | `auctions/closing.py`: `close_auction()` |
+| How often the worker checks | `.env`: `AUCTION_WORKER_INTERVAL_SECONDS` (default 5) |
+| Winner email text / "next steps" | `auctions/emails.py`: `notify_winner()` |
+| Email losing bidders (off by default) | `.env`: `AUCTION_NOTIFY_LOSERS=True`; text in `auctions/emails.py`: `notify_losers()` |
+| How long auctions stay under "Recently closed" | `config/settings.py`: `AUCTION_RECENTLY_CLOSED_DAYS` |
+| Worker commands | `auctions/management/commands/run_auction_worker.py`, `close_auctions.py` |
 
 ## 2b. Real-time (WebSockets)
 
@@ -147,3 +161,4 @@ Commit the new file in `*/migrations/` together with the model change.
 | WebSocket consumer | `auctions/tests/test_consumers.py` |
 | Auction page, admin privacy | `auctions/tests/test_auction_room.py` |
 | Demo data command | `auctions/tests/test_seed_demo.py` |
+| Closure, winner email, worker commands, result display | `auctions/tests/test_closing.py` |

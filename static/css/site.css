@@ -90,6 +90,8 @@ table.details td { padding: 5px 0; }
 tr.mine td { background: #f3f8ec; }
 tr.flash td { animation: flash 2s ease-out; }
 @keyframes flash { from { background: #fff3cd; } to { background: transparent; } }
+.result-panel { border-left: 6px solid var(--brand); }
+.result-panel h2 { margin-top: 0; }
 @media (max-width: 900px) { .room { grid-template-columns: 1fr; } }
 
 /* Small screens (phones) */
