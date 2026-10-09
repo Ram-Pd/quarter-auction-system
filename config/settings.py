@@ -191,15 +191,19 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 
 # Email
-# Development default: each email is written as a .eml file in sent_emails/
-# (open it in Outlook/Mail to see the attached PDFs). For real sending, set
-# EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend and the EMAIL_* values in .env.
-EMAIL_BACKEND = env('EMAIL_BACKEND', default='config.email_backends.EmlFileBackend')
+# - EMAIL_HOST_PASSWORD set in .env -> real sending through SMTP (e.g. Gmail).
+# - No password                     -> each email is saved as a .eml file in
+#   sent_emails/ (double-click to open it, attachments included).
+# Set the password easily with:  .\scripts\setup_email.ps1
+# EMAIL_BACKEND in .env overrides this choice.
+EMAIL_HOST_PASSWORD = env('EMAIL_HOST_PASSWORD', default='').replace(' ', '')  # Gmail shows it with spaces
+EMAIL_BACKEND = env('EMAIL_BACKEND', default=(
+    'django.core.mail.backends.smtp.EmailBackend' if EMAIL_HOST_PASSWORD
+    else 'config.email_backends.EmlFileBackend'))
 EMAIL_FILE_PATH = BASE_DIR / 'sent_emails'
 EMAIL_HOST = env('EMAIL_HOST', default='localhost')
 EMAIL_PORT = env.int('EMAIL_PORT', default=587)
 EMAIL_HOST_USER = env('EMAIL_HOST_USER', default='')
-EMAIL_HOST_PASSWORD = env('EMAIL_HOST_PASSWORD', default='')
 EMAIL_USE_TLS = env.bool('EMAIL_USE_TLS', default=True)
 EMAIL_TIMEOUT = 20  # seconds; don't hang the registration page if SMTP is down
 DEFAULT_FROM_EMAIL = env('DEFAULT_FROM_EMAIL', default='auction-demo@localhost')
