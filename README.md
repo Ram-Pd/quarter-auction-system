@@ -51,7 +51,17 @@ python -c "from django.core.management.utils import get_random_secret_key as g; 
 
 ## Run
 
-Two terminals (activate the venv in each):
+**Easiest:** two terminals, no venv activation needed:
+```powershell
+.\scripts\run_server.ps1     # terminal 1: starts PostgreSQL + the website
+.\scripts\run_worker.ps1     # terminal 2: background worker
+```
+
+> **`ModuleNotFoundError: No module named 'environ'`** means the computer-wide Python ran
+> instead of the project's venv. Use the scripts above, or run `.\venv\Scripts\Activate.ps1`
+> first (the prompt then starts with `(venv)`).
+
+Or by hand (activate the venv in each terminal):
 ```powershell
 # terminal 1: database + web server
 .\scripts\start_postgres.ps1
