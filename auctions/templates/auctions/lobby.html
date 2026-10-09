@@ -8,6 +8,11 @@
   <h1>Auction lobby</h1>
   <p class="muted">Quarters currently on auction. Times are Indian Standard Time.
     Countdowns update automatically.</p>
+  {% if bidding_in %}
+    <div class="alert alert-ok" style="margin:12px 0 0">You are bidding for quarter
+      <strong>{{ bidding_in.quarter.quarter_no }}</strong>. You can bid on another quarter
+      only after that auction has ended.</div>
+  {% endif %}
 </div>
 
 <div class="card">

@@ -239,6 +239,9 @@ AUTH_RATE_LIMIT_WINDOW_SECONDS = env.int('AUTH_RATE_LIMIT_WINDOW_SECONDS', defau
 AUCTION_ANTI_SNIPE_WINDOW_SECONDS = env.int('AUCTION_ANTI_SNIPE_WINDOW_SECONDS', default=60)
 # Minimum gap between two bids from the same browser connection (anti-flooding).
 AUCTION_BID_MIN_INTERVAL_SECONDS = env.float('AUCTION_BID_MIN_INTERVAL_SECONDS', default=1.0)
+# An applicant may bid on only ONE quarter at a time: while they have bids in an
+# auction that is still open, bids in other auctions are refused (confirmed rule).
+AUCTION_ONE_QUARTER_AT_A_TIME = env.bool('AUCTION_ONE_QUARTER_AT_A_TIME', default=True)
 # How many recent bids the auction page shows.
 AUCTION_RECENT_BIDS_SHOWN = 20
 

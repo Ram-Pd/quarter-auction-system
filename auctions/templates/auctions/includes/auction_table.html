@@ -40,7 +40,8 @@
       <td class="num">{% if a.current_highest_bid %}<strong>{{ a.current_highest_bid|floatformat:2|intcomma }}</strong>{% else %}<span class="muted">No bids yet</span>{% endif %}</td>
       <td class="num">{{ a.minimum_next_bid|floatformat:2|intcomma }}</td>
       <td><a class="btn btn-small" href="{% url 'auctions:auction_room' a.pk %}">Open</a>
-        {% if a.joined %}<br><small class="msg-ok">Joined</small>{% endif %}</td>
+        {% if a.bidding_here %}<br><small class="msg-ok">Bidding here</small>
+        {% elif a.joined %}<br><small class="msg-ok">Joined</small>{% endif %}</td>
     </tr>
   {% endfor %}
   </tbody>

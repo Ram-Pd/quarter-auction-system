@@ -2,7 +2,7 @@
 
 _Last updated: 2026-10-09, end of Milestone 5 (all proposed milestones complete)_
 
-**Test status:** 184 automated tests, all passing on PostgreSQL 17 (`python manage.py test`).
+**Test status:** 193 automated tests, all passing on PostgreSQL 17 (`python manage.py test`).
 **Before running anything:** start PostgreSQL with `.\scripts\start_postgres.ps1` (it does not auto-start).
 
 See also: `README.md` (setup/run/demo) and `docs/HOW_TO_CHANGE.md` (which file to edit for what).
@@ -165,6 +165,7 @@ See also: `README.md` (setup/run/demo) and `docs/HOW_TO_CHANGE.md` (which file t
 - A bidder cannot outbid themselves while holding the highest bid.
 - Equal bids: the first one accepted wins; later equal bids are "too low" (open question 6).
 - Anti-snipe window is 60 s (setting). The new deadline is now + the auction's extension, never earlier than the current deadline.
+- **One quarter at a time (confirmed by user):** while an applicant has bids in an auction that is still open, bids in any other auction are refused. Joining or watching other auctions is still allowed, and the rule lifts when that auction closes or is cancelled. The applicant row is locked so simultaneous first bids in two auctions can't both pass (`test_concurrency.py`; verified to fail without the lock). Setting: `AUCTION_ONE_QUARTER_AT_A_TIME`.
 - Bidder codes are numbered in join order per auction ("Bidder 1, 2, …").
 - Staff may watch an auction page live but cannot bid.
 - Admins may cancel an auction even after bids were placed; the bids are kept for audit.

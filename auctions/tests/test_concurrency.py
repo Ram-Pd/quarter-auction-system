@@ -191,3 +191,29 @@ class SimultaneousClosureTests(TransactionTestCase):
         self.assertEqual(auction.status, Auction.Status.CLOSED)
         self.assertEqual(auction.winning_bid, highest)                      # winner = highest bid
         self.assertTrue(all(b.created_at < auction.end_time for b in bids))  # nothing after deadline
+
+
+@skipUnless(connection.vendor == "postgresql", "Row locking needs PostgreSQL")
+class OneQuarterAtATimeConcurrencyTests(TransactionTestCase):
+    def test_simultaneous_first_bids_in_two_auctions_only_one_accepted(self):
+        """The same person fires first bids at two different quarters at the same instant."""
+        from auctions.bidding import join_auction
+        from auctions.tests.factories import make_quarter
+
+        first = make_auction(make_quarter("B-214"))
+        second = make_auction(make_quarter("C-305"))
+        applicant = make_bidder(first, 1)[0]
+        join_auction(second, applicant)
+
+        for _ in range(5):  # repeat to give a race every chance to show up
+            Bid.objects.all().delete()  # start each round fresh
+            Auction.objects.update(current_highest_bid=None)
+            results = run_simultaneously([
+                lambda: place_bid(first.pk, applicant, "4500", uuid.uuid4()),
+                lambda: place_bid(second.pk, applicant, "4500", uuid.uuid4()),
+            ])
+            accepted = [r for r in results if not isinstance(r, Exception)]
+            rejected = [r for r in results if isinstance(r, BidRejected)]
+            self.assertEqual(len(accepted), 1, results)
+            self.assertEqual(rejected[0].code, "one_quarter_at_a_time")
+            self.assertEqual(Bid.objects.count(), 1)

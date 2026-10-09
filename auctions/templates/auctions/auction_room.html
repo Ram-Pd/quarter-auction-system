@@ -69,6 +69,12 @@
         </div>
         <div id="bid-panel" {% if initial_state.result %}hidden{% endif %}>
         <h2>Place a bid</h2>
+        {% if bidding_elsewhere %}
+          <div class="alert alert-err">You are already bidding for quarter
+            <strong>{{ bidding_elsewhere.quarter.quarter_no }}</strong>
+            (<a href="{% url 'auctions:auction_room' bidding_elsewhere.pk %}">open it</a>).
+            You can bid here only after that auction has ended. One quarter at a time.</div>
+        {% endif %}
         <p class="muted">You are <strong id="you">{{ participation.anonymous_code }}</strong> in this auction.
           Other bidders only see this code.</p>
         <form id="bid-form" novalidate>

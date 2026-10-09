@@ -11,7 +11,7 @@ from accounts.decorators import applicant_required
 from accounts.models import Applicant
 
 from . import realtime
-from .bidding import BidRejected, join_auction
+from .bidding import BidRejected, join_auction, other_active_auction
 from .models import Auction, Participation
 
 
@@ -35,10 +35,13 @@ def lobby(request):
     joined_ids = set(Participation.objects.filter(applicant=applicant).values_list("auction_id", flat=True)
                      ) if applicant else set()
 
+    bidding_in = other_active_auction(applicant) if applicant else None  # rule 7
+
     sections = {Auction.Phase.LIVE: [], Auction.Phase.CLOSING: [], Auction.Phase.UPCOMING: []}
     for auction in open_auctions:
         auction.current_phase = auction.phase(now)  # compute once per request
         auction.joined = auction.pk in joined_ids
+        auction.bidding_here = bidding_in is not None and auction.pk == bidding_in.pk
         sections[auction.current_phase].append(auction)
 
     recently_closed = (Auction.objects
@@ -51,6 +54,7 @@ def lobby(request):
         "live": sections[Auction.Phase.LIVE] + sections[Auction.Phase.CLOSING],
         "upcoming": sorted(sections[Auction.Phase.UPCOMING], key=lambda a: a.start_time),
         "recently_closed": recently_closed,
+        "bidding_in": bidding_in if settings.AUCTION_ONE_QUARTER_AT_A_TIME else None,
         "server_now": now,
     })
 
@@ -63,7 +67,11 @@ def auction_room(request, auction_id):
     participation = (Participation.objects.filter(auction=auction, applicant=applicant).first()
                      if applicant else None)
     phase = auction.phase()
+    # Rule 7 (one quarter at a time): warn before the bidder tries.
+    bidding_elsewhere = (other_active_auction(applicant, exclude_auction_id=auction.pk)
+                         if applicant and settings.AUCTION_ONE_QUARTER_AT_A_TIME else None)
     return render(request, "auctions/auction_room.html", {
+        "bidding_elsewhere": bidding_elsewhere,
         "auction": auction,
         "phase": phase,
         "participation": participation,

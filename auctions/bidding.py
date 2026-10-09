@@ -18,6 +18,8 @@ from django.db import IntegrityError, transaction
 from django.db.models import Max
 from django.utils import timezone
 
+from accounts.models import Applicant
+
 from . import realtime
 from .models import Auction, Bid, Participation
 
@@ -66,6 +68,16 @@ def join_auction(auction, applicant):
 
 # ---------------------------------------------------------------- bidding
 
+def other_active_auction(applicant, exclude_auction_id=None):
+    """
+    The still-open auction (other than `exclude_auction_id`) in which this
+    applicant has already bid, or None. Used by rule 7 and by the pages to warn early.
+    """
+    return (Auction.objects.filter(status=Auction.Status.OPEN,
+                                   bids__participation__applicant=applicant)
+            .exclude(pk=exclude_auction_id).select_related("quarter").distinct().first())
+
+
 def parse_amount(raw):
     """Turn user input into a Decimal with at most 2 decimal places, or reject it."""
     text = str(raw).strip().replace(",", "")
@@ -100,6 +112,9 @@ def place_bid(auction_id, applicant, raw_amount, raw_client_bid_id):
       4. First bid >= base rate; later bids >= highest + minimum increment.
       5. ASSUMPTION: you cannot outbid yourself while you hold the highest bid.
       6. A bid in the final window extends the deadline (anti-sniping).
+      7. One quarter at a time (confirmed by user): while you have bids in an
+         auction that is still open, you cannot bid in any other auction.
+         Switch off with settings.AUCTION_ONE_QUARTER_AT_A_TIME = False.
     """
     amount = parse_amount(raw_amount)
     client_bid_id = parse_client_bid_id(raw_client_bid_id)
@@ -127,6 +142,18 @@ def place_bid(auction_id, applicant, raw_amount, raw_client_bid_id):
         earlier = Bid.objects.filter(participation=participation, client_bid_id=client_bid_id).first()
         if earlier:
             return BidOutcome(bid=earlier, duplicate=True)
+
+        # Rule 7. Lock the applicant row too, so two first bids sent at the same
+        # moment to two DIFFERENT auctions can't both get through.
+        # Lock order is always auction -> applicant, which avoids deadlocks.
+        if settings.AUCTION_ONE_QUARTER_AT_A_TIME:
+            Applicant.objects.select_for_update().get(pk=applicant.pk)
+            other = other_active_auction(applicant, exclude_auction_id=auction.pk)
+            if other:
+                raise BidRejected(
+                    "one_quarter_at_a_time",
+                    f"You are already bidding for quarter {other.quarter.quarter_no}. You can bid on "
+                    "another quarter only after that auction has ended.")
 
         # Rule 4
         minimum = auction.minimum_next_bid

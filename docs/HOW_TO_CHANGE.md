@@ -24,6 +24,7 @@ under **PROJECT SETTINGS**.
 | Database (PostgreSQL required for bidding) | `DATABASE_URL=postgres://user:pass@localhost:5432/dbname` | SQLite file `db.sqlite3` |
 | Anti-snipe window ("final minute") | `AUCTION_ANTI_SNIPE_WINDOW_SECONDS=60` | 60 |
 | Minimum gap between bids from one browser tab | `AUCTION_BID_MIN_INTERVAL_SECONDS=1.0` | 1.0 |
+| Allow bidding on several quarters at once | `AUCTION_ONE_QUARTER_AT_A_TIME=False` | True (one quarter at a time) |
 | Redis for WebSockets across several processes | `REDIS_URL=redis://localhost:6379/0` | In-memory (one process) |
 
 Production-only values (see `docs/DEPLOYMENT.md`): `DEBUG=False`, `CSRF_TRUSTED_ORIGINS`,
@@ -50,7 +51,7 @@ In `config/settings.py` (not in `.env`):
 | Default minimum increment / anti-snipe extension | `auctions/models.py`: `Auction.min_increment` / `anti_snipe_extension` defaults |
 | Auction phases (Upcoming / Live / Closing) | `auctions/models.py`: `Auction.phase()` |
 | Fields locked once an auction starts | `auctions/admin.py`: `AuctionAdmin.LOCKED_AFTER_START` |
-| **Bid validation rules** (live, joined, minimum, self-outbid, duplicates, anti-sniping) | `auctions/bidding.py`: `place_bid()` (rules numbered in its docstring) |
+| **Bid validation rules** (live, joined, minimum, self-outbid, duplicates, anti-sniping, one quarter at a time) | `auctions/bidding.py`: `place_bid()` (rules numbered in its docstring) |
 | Joining an auction / how "Bidder N" codes are assigned | `auctions/bidding.py`: `join_auction()` |
 | Accepted amount format (decimals, max) | `auctions/bidding.py`: `parse_amount()` |
 | How many recent bids are shown | `config/settings.py`: `AUCTION_RECENT_BIDS_SHOWN` |

@@ -4,7 +4,7 @@ from datetime import timedelta
 from decimal import Decimal
 from unittest import mock
 
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.utils import timezone
 
 from accounts.tests.factories import make_activated_applicant, make_applicant
@@ -185,3 +185,62 @@ class BroadcastTimingTests(TestCase):
                 with self.assertRaises(BidRejected):
                     bid(self.auction, self.applicant, "1")
         broadcast.assert_not_called()
+
+
+class OneQuarterAtATimeTests(TestCase):
+    """Rule 7: while you have bids in an open auction, you can't bid in another."""
+
+    def setUp(self):
+        self.first = make_auction(make_quarter("B-214"))
+        self.second = make_auction(make_quarter("C-305"))
+        self.applicant, _, _ = make_bidder(self.first, 1)
+        join_auction(self.second, self.applicant)
+        self.rival, _, _ = make_bidder(self.first, 2)
+
+    def test_cannot_bid_on_second_quarter_while_first_is_open(self):
+        bid(self.first, self.applicant, "4500")
+        with self.assertRaises(BidRejected) as ctx:
+            bid(self.second, self.applicant, "4500")
+        self.assertEqual(ctx.exception.code, "one_quarter_at_a_time")
+        self.assertIn("B-214", ctx.exception.message)
+
+    def test_still_allowed_to_keep_bidding_on_the_same_quarter(self):
+        bid(self.first, self.applicant, "4500")
+        bid(self.first, self.rival, "4600")
+        self.assertEqual(bid(self.first, self.applicant, "4700").bid.amount, Decimal("4700"))
+
+    def test_joining_and_watching_other_auctions_is_fine(self):
+        bid(self.first, self.applicant, "4500")
+        third = make_auction(make_quarter("D-407"))
+        self.assertEqual(join_auction(third, self.applicant).anonymous_code, "Bidder 1")
+
+    def test_free_again_after_first_auction_closes(self):
+        from auctions.closing import close_auction
+        bid(self.first, self.applicant, "4500")
+        Auction.objects.filter(pk=self.first.pk).update(end_time=timezone.now() - timedelta(seconds=1))
+        close_auction(self.first.pk)
+        self.assertEqual(bid(self.second, self.applicant, "4500").bid.amount, Decimal("4500"))
+
+    def test_free_again_after_first_auction_is_cancelled(self):
+        bid(self.first, self.applicant, "4500")
+        self.first.cancel()
+        self.assertEqual(bid(self.second, self.applicant, "4500").bid.amount, Decimal("4500"))
+
+    def test_joined_but_never_bid_does_not_count(self):
+        # Joined `first` but no bid there yet: bidding on `second` is allowed.
+        self.assertEqual(bid(self.second, self.applicant, "4500").bid.amount, Decimal("4500"))
+
+    @override_settings(AUCTION_ONE_QUARTER_AT_A_TIME=False)
+    def test_rule_can_be_switched_off(self):
+        bid(self.first, self.applicant, "4500")
+        self.assertEqual(bid(self.second, self.applicant, "4500").bid.amount, Decimal("4500"))
+
+    def test_pages_warn_in_advance(self):
+        from django.urls import reverse
+        bid(self.first, self.applicant, "4500")
+        self.client.force_login(self.applicant.user)
+        lobby = self.client.get(reverse("auctions:lobby"))
+        self.assertContains(lobby, "You are bidding for quarter")
+        self.assertContains(lobby, "Bidding here")
+        room = self.client.get(reverse("auctions:auction_room", args=[self.second.pk]))
+        self.assertContains(room, "You are already bidding for quarter")
