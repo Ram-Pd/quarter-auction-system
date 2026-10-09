@@ -8,19 +8,7 @@
 
   <form method="post" novalidate>
     {% csrf_token %}
-    {{ form.non_field_errors }}
-    {% for field in form %}
-      {% if field.name == "declaration" %}
-        <div class="check" style="margin-top:18px">
-          {{ field.errors }}
-          {{ field }} {{ field.label_tag }}
-        </div>
-      {% else %}
-        {{ field.label_tag }}
-        {{ field.errors }}
-        {{ field }}
-      {% endif %}
-    {% endfor %}
+    {% include "includes/form_fields.html" with form=form %}
     <button type="submit" class="btn">Register</button>
   </form>
 </div>

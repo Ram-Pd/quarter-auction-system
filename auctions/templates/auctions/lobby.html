@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}Auction lobby{% endblock %}
+{% block main_class %}wide{% endblock %}
+
+{% block content %}
+<div class="card">
+  <h1>Auction lobby</h1>
+  <p class="muted">Quarters currently on auction. Times are Indian Standard Time.
+    Countdowns update automatically.</p>
+</div>
+
+<div class="card">
+  <h2>Live now ({{ live|length }})</h2>
+  {% if live %}
+    {% include "auctions/includes/auction_table.html" with auctions=live %}
+  {% else %}
+    <p class="muted">No auction is live right now.</p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>Upcoming ({{ upcoming|length }})</h2>
+  {% if upcoming %}
+    {% include "auctions/includes/auction_table.html" with auctions=upcoming %}
+  {% else %}
+    <p class="muted">No upcoming auctions are scheduled.</p>
+  {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+  {# Server time lets the countdown correct for a wrong clock on the user's computer. #}
+  <script src="{% static 'auctions/countdown.js' %}" data-server-now="{{ server_now|date:'c' }}"></script>
+{% endblock %}

@@ -1,23 +1,14 @@
+from datetime import timedelta
 from decimal import Decimal
 
+from django.core.exceptions import ValidationError
 from django.db import IntegrityError
+from django.db.models import ProtectedError
 from django.test import TestCase
+from django.utils import timezone
 
-from auctions.models import Quarter
-
-
-def make_quarter(**overrides):
-    data = {
-        "quarter_no": "B-214",
-        "sector": "Sector 4",
-        "location_block": "Near market",
-        "quarter_type": Quarter.QuarterType.B,
-        "floor": "2nd",
-        "area_sqft": Decimal("750"),
-        "base_rate": Decimal("4500"),
-    }
-    data.update(overrides)
-    return Quarter.objects.create(**data)
+from auctions.models import Auction, Quarter
+from auctions.tests.factories import make_auction, make_quarter
 
 
 class QuarterModelTests(TestCase):
@@ -50,3 +41,75 @@ class QuarterModelTests(TestCase):
 
     def test_str(self):
         self.assertEqual(str(make_quarter()), "B-214")
+
+
+class AuctionModelTests(TestCase):
+    def test_creating_open_auction_marks_quarter_in_auction(self):
+        auction = make_auction()
+        auction.quarter.refresh_from_db()
+        self.assertEqual(auction.quarter.status, Quarter.Status.IN_AUCTION)
+
+    def test_end_must_be_after_start(self):
+        with self.assertRaises(IntegrityError):
+            make_auction(lasts=timedelta(0))
+
+    def test_min_increment_must_be_positive(self):
+        with self.assertRaises(IntegrityError):
+            make_auction(min_increment=Decimal("0"))
+
+    def test_only_one_open_auction_per_quarter(self):
+        auction = make_auction()
+        with self.assertRaises(IntegrityError):
+            make_auction(quarter=auction.quarter)
+
+    def test_new_auction_allowed_after_cancel(self):
+        first = make_auction()
+        first.cancel()
+        second = make_auction(quarter=first.quarter)
+        self.assertEqual(second.status, Auction.Status.OPEN)
+
+    def test_cancel_frees_quarter(self):
+        auction = make_auction()
+        auction.cancel()
+        auction.quarter.refresh_from_db()
+        self.assertEqual(auction.status, Auction.Status.CANCELLED)
+        self.assertEqual(auction.quarter.status, Quarter.Status.VACANT)
+
+    def test_cannot_cancel_twice(self):
+        auction = make_auction()
+        auction.cancel()
+        with self.assertRaises(ValidationError):
+            auction.cancel()
+
+    def test_clean_rejects_allotted_quarter_and_past_end(self):
+        quarter = make_quarter(status=Quarter.Status.ALLOTTED)
+        now = timezone.now()
+        auction = Auction(quarter=quarter, start_time=now - timedelta(hours=2),
+                          end_time=now - timedelta(hours=1))
+        with self.assertRaises(ValidationError) as ctx:
+            auction.full_clean()
+        self.assertIn("quarter", ctx.exception.message_dict)
+        self.assertIn("end_time", ctx.exception.message_dict)
+
+    def test_phase_follows_the_clock(self):
+        auction = make_auction(starts_in=timedelta(hours=1), lasts=timedelta(hours=1))
+        start, end = auction.start_time, auction.end_time
+        self.assertEqual(auction.phase(now=start - timedelta(seconds=1)), Auction.Phase.UPCOMING)
+        self.assertEqual(auction.phase(now=start), Auction.Phase.LIVE)
+        self.assertEqual(auction.phase(now=end - timedelta(seconds=1)), Auction.Phase.LIVE)
+        self.assertEqual(auction.phase(now=end), Auction.Phase.CLOSING)
+        auction.status = Auction.Status.CLOSED_NO_BIDS
+        self.assertEqual(auction.phase(now=end), Auction.Phase.CLOSED)
+        auction.status = Auction.Status.CANCELLED
+        self.assertEqual(auction.phase(now=start), Auction.Phase.CANCELLED)
+
+    def test_minimum_next_bid(self):
+        auction = make_auction(min_increment=Decimal("250"))
+        self.assertEqual(auction.minimum_next_bid, Decimal("4500"))  # base rate
+        auction.current_highest_bid = Decimal("5000")
+        self.assertEqual(auction.minimum_next_bid, Decimal("5250"))
+
+    def test_quarter_with_auction_cannot_be_deleted(self):
+        auction = make_auction()
+        with self.assertRaises(ProtectedError):
+            auction.quarter.delete()

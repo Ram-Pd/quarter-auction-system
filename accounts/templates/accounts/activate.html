@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Activate account{% endblock %}
+{% block content %}
+<div class="card">
+  <h1>Activate your account</h1>
+  <p class="muted">You can activate after the auction office has verified your EMD payment.
+    Enter the email address you registered with and the URN from your Intimation Slip,
+    then choose a password. Your URN will be your username.</p>
+
+  <form method="post" novalidate>
+    {% csrf_token %}
+    {% include "includes/form_fields.html" with form=form %}
+    <button type="submit" class="btn">Activate</button>
+  </form>
+  <p class="muted" style="margin-top:18px">Already activated? <a href="{% url 'accounts:login' %}">Log in</a>.</p>
+</div>
+{% endblock %}

@@ -6,7 +6,7 @@ from django.test import TestCase
 from django.urls import reverse
 
 from accounts.models import Applicant
-from accounts.tests.test_generation import new_applicant
+from accounts.tests.factories import new_applicant
 
 VALID = {
     "name": "  Ravi   Kumar ",

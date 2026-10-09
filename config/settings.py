@@ -46,6 +46,7 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'django.contrib.humanize',  # number formatting in templates (1,234)
     # Project apps
     'accounts',
     'auctions',
@@ -73,6 +74,7 @@ TEMPLATES = [
                 'django.template.context_processors.request',
                 'django.contrib.auth.context_processors.auth',
                 'django.contrib.messages.context_processors.messages',
+                'config.context_processors.project_settings',
             ],
         },
     },
@@ -126,6 +128,8 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
 STATIC_URL = 'static/'
+STATICFILES_DIRS = [BASE_DIR / 'static']   # project-wide CSS / JS
+STATIC_ROOT = BASE_DIR / 'staticfiles'     # filled by "collectstatic" for production
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
@@ -148,7 +152,26 @@ EMAIL_TIMEOUT = 20  # seconds; don't hang the registration page if SMTP is down
 DEFAULT_FROM_EMAIL = env('DEFAULT_FROM_EMAIL', default='auction-demo@localhost')
 
 
+# Login / logout
+LOGIN_URL = 'accounts:login'
+LOGIN_REDIRECT_URL = 'auctions:lobby'
+LOGOUT_REDIRECT_URL = 'home'
+PASSWORD_RESET_TIMEOUT = 60 * 60  # reset links expire after 1 hour (seconds)
+
+
+# =============================================================================
+# PROJECT SETTINGS: the business values you are most likely to change.
+# Each can be overridden in .env without touching code.
+# =============================================================================
+
 # Auction placeholders: NOT official SAIL values (CLAUDE.md open question 2).
 AUCTION_TITLE = env('AUCTION_TITLE', default='Vacant Quarter Auction (Training Demo)')
 AUCTION_REFERENCE = env('AUCTION_REFERENCE', default='DEMO/QA/2026/01')
 EMD_AMOUNT = Decimal(env('EMD_AMOUNT', default='10000'))
+
+# Brute-force protection for activation and login (accounts/ratelimit.py).
+# After this many failures within the window, further attempts are refused
+# until the window has passed.
+AUTH_RATE_LIMIT_ATTEMPTS = env.int('AUTH_RATE_LIMIT_ATTEMPTS', default=5)        # per email/URN
+AUTH_RATE_LIMIT_IP_ATTEMPTS = env.int('AUTH_RATE_LIMIT_IP_ATTEMPTS', default=50)  # per IP address
+AUTH_RATE_LIMIT_WINDOW_SECONDS = env.int('AUTH_RATE_LIMIT_WINDOW_SECONDS', default=15 * 60)

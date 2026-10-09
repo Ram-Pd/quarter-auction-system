@@ -1,6 +1,11 @@
-from django.db import models
+from datetime import timedelta
+from decimal import Decimal
+
+from django.core.exceptions import ValidationError
+from django.db import models, transaction
 from django.db.models import Q
 from django.db.models.functions import Upper
+from django.utils import timezone
 
 
 class Quarter(models.Model):
@@ -73,3 +78,142 @@ class Quarter(models.Model):
 
     def __str__(self):
         return self.quarter_no
+
+
+class Auction(models.Model):
+    """
+    One auction of one quarter. Several auctions can run at the same time.
+
+    `status` stores only what the clock cannot tell us (open / closed / cancelled).
+    Whether an OPEN auction is upcoming, live or awaiting closure is worked out
+    from start_time / end_time; see `phase()`.
+    """
+
+    class Status(models.TextChoices):
+        OPEN = "OPEN", "Open"                                # scheduled or running
+        CLOSED = "CLOSED", "Closed - won"                    # set by the closure job (Milestone 5)
+        CLOSED_NO_BIDS = "CLOSED_NO_BIDS", "Closed - no bids"  # open question 7 placeholder
+        CANCELLED = "CANCELLED", "Cancelled"
+
+    class Phase(models.TextChoices):
+        """Computed, never stored. Used by the lobby and (later) the bidding page."""
+        UPCOMING = "UPCOMING", "Upcoming"
+        LIVE = "LIVE", "Live"
+        CLOSING = "CLOSING", "Closing"  # deadline passed, closure job not run yet
+        CLOSED = "CLOSED", "Closed"
+        CANCELLED = "CANCELLED", "Cancelled"
+
+    quarter = models.ForeignKey(
+        Quarter,
+        on_delete=models.PROTECT,  # a quarter with auction history can't be deleted
+        related_name="auctions",
+    )
+    start_time = models.DateTimeField()
+    end_time = models.DateTimeField(
+        help_text="Current deadline. Anti-sniping (Milestone 4) may push it later.",
+    )
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.OPEN,
+                              db_index=True)
+    # ASSUMPTION (open question 4): per-auction value, default is a placeholder.
+    min_increment = models.DecimalField(
+        "minimum increment (Rs.)", max_digits=12, decimal_places=2, default=Decimal("100.00"),
+        help_text="Each new bid must beat the current highest bid by at least this much.",
+    )
+    # ASSUMPTION (open question 5): per-auction value, default is a placeholder.
+    anti_snipe_extension = models.DurationField(
+        default=timedelta(minutes=2),
+        help_text="How much a bid in the final minute extends the deadline (HH:MM:SS).",
+    )
+    current_highest_bid = models.DecimalField(
+        max_digits=12, decimal_places=2, null=True, blank=True, editable=False,
+        help_text="Kept up to date by the bidding code (Milestone 4).",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["start_time"]
+        indexes = [
+            # The closure job (Milestone 5) looks for OPEN auctions past end_time.
+            models.Index(fields=["status", "end_time"], name="auction_status_end_idx"),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(end_time__gt=models.F("start_time")),
+                name="auction_end_after_start",
+                violation_error_message="End time must be after start time.",
+            ),
+            models.CheckConstraint(
+                condition=Q(min_increment__gt=0),
+                name="auction_min_increment_positive",
+                violation_error_message="Minimum increment must be greater than 0.",
+            ),
+            models.CheckConstraint(
+                condition=Q(anti_snipe_extension__gte=timedelta(0)),
+                name="auction_extension_not_negative",
+                violation_error_message="Anti-snipe extension cannot be negative.",
+            ),
+            models.UniqueConstraint(
+                fields=["quarter"],
+                condition=Q(status="OPEN"),
+                name="one_open_auction_per_quarter",
+                violation_error_message="This quarter already has an open auction.",
+            ),
+        ]
+
+    def __str__(self):
+        quarter_no = self.quarter.quarter_no if self.quarter_id else "?"
+        return f"{quarter_no} (auction #{self.pk})"
+
+    # ---------- validation (admin forms call this) ----------
+
+    def clean(self):
+        errors = {}
+        if self.quarter_id and self.quarter.status == Quarter.Status.ALLOTTED:
+            errors["quarter"] = "This quarter is already allotted."
+        if self._state.adding and self.end_time and self.end_time <= timezone.now():
+            errors["end_time"] = "End time must be in the future."
+        if errors:
+            raise ValidationError(errors)
+
+    # ---------- state changes ----------
+
+    def save(self, *args, **kwargs):
+        with transaction.atomic():
+            creating = self._state.adding
+            super().save(*args, **kwargs)
+            if creating and self.status == self.Status.OPEN:
+                Quarter.objects.filter(pk=self.quarter_id).update(status=Quarter.Status.IN_AUCTION)
+
+    def cancel(self):
+        """Cancel an open auction and free the quarter again."""
+        if self.status != self.Status.OPEN:
+            raise ValidationError("Only open auctions can be cancelled.")
+        with transaction.atomic():
+            self.status = self.Status.CANCELLED
+            self.save(update_fields=["status", "updated_at"])
+            Quarter.objects.filter(pk=self.quarter_id).update(status=Quarter.Status.VACANT)
+
+    # ---------- computed values (nothing stored) ----------
+
+    def phase(self, now=None):
+        now = now or timezone.now()
+        if self.status == self.Status.CANCELLED:
+            return self.Phase.CANCELLED
+        if self.status != self.Status.OPEN:
+            return self.Phase.CLOSED
+        if now < self.start_time:
+            return self.Phase.UPCOMING
+        if now < self.end_time:
+            return self.Phase.LIVE
+        return self.Phase.CLOSING
+
+    @property
+    def minimum_next_bid(self):
+        """
+        Lowest acceptable next bid.
+        ASSUMPTION: the first bid must be at least the quarter's base rate.
+        """
+        if self.current_highest_bid is None:
+            return self.quarter.base_rate
+        return self.current_highest_bid + self.min_increment

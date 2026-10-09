@@ -6,21 +6,7 @@ from django.db import IntegrityError
 from django.test import TestCase
 
 from accounts.models import Applicant, generate_urn
-
-
-def new_applicant(n=1, **overrides):
-    """Unsaved applicant WITHOUT urn / application_no (so they get generated)."""
-    data = {
-        "name": f"Test Applicant {n}",
-        "father_name": "Test Father",
-        "mobile": "9876543210",
-        "email": f"applicant{n}@example.com",
-        "address": "Fake address",
-        "state": "Jharkhand",
-        "pin_code": "827001",
-    }
-    data.update(overrides)
-    return Applicant(**data)
+from accounts.tests.factories import new_applicant
 
 
 class UrnGenerationTests(TestCase):

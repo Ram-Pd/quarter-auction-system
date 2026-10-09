@@ -1,11 +1,14 @@
 import logging
 
+from django.contrib import messages
+from django.contrib.auth import login
 from django.db import transaction
 from django.shortcuts import redirect, render
 
 from .emails import send_registration_documents
-from .forms import RegistrationForm
+from .forms import ActivationForm, RegistrationForm
 from .models import Applicant
+from .services import ActivationError, activate_applicant
 
 logger = logging.getLogger(__name__)
 
@@ -45,3 +48,22 @@ def register_done(request):
         "email": applicant.email if applicant else "",
         "email_ok": request.session.get("registration_email_ok", False),
     })
+
+
+def activate(request):
+    if request.user.is_authenticated:
+        return redirect("auctions:lobby")
+    if request.method == "POST":
+        form = ActivationForm(request.POST, request=request)
+        if form.is_valid():
+            try:
+                user = activate_applicant(form.applicant, form.cleaned_data["password1"])
+            except ActivationError as error:  # e.g. activated in another tab a moment ago
+                form.add_error(None, str(error))
+            else:
+                login(request, user)
+                messages.success(request, f"Your account is activated. Your username is your URN ({user.username}).")
+                return redirect("auctions:lobby")
+    else:
+        form = ActivationForm(request=request)
+    return render(request, "accounts/activate.html", {"form": form})

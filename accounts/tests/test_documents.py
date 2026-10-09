@@ -6,7 +6,7 @@ from pypdf import PdfReader
 
 from accounts.emails import send_registration_documents
 from accounts.pdfs import application_form_pdf, intimation_slip_pdf, qr_payload
-from accounts.tests.test_generation import new_applicant
+from accounts.tests.factories import new_applicant
 
 
 def pdf_text(data):

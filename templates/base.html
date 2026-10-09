@@ -1,33 +1,36 @@
-<!doctype html>
+{% load static %}<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Quarter Auction{% endblock %} | Training Demo</title>
-  <style>
-    :root { --brand: #1f4e79; --err: #b00020; --ok: #1b5e20; --border: #ccd; }
-    * { box-sizing: border-box; }
-    body { margin: 0; font-family: system-ui, Segoe UI, Arial, sans-serif; background: #f5f6f8; color: #222; }
-    header { background: var(--brand); color: #fff; padding: 12px 16px; }
-    header a { color: #fff; text-decoration: none; font-weight: 600; }
-    .notice { background: #fff3cd; color: #6b4e00; text-align: center; font-size: 13px; padding: 6px 16px; }
-    main { max-width: 760px; margin: 24px auto; padding: 0 16px; }
-    .card { background: #fff; border: 1px solid var(--border); border-radius: 8px; padding: 24px; }
-    h1 { margin-top: 0; font-size: 1.5rem; color: var(--brand); }
-    label { display: block; font-weight: 600; margin: 14px 0 4px; }
-    input[type=text], input[type=email], select, textarea {
-      width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 4px; font: inherit; }
-    .check label { display: inline; font-weight: normal; }
-    .errorlist { color: var(--err); margin: 4px 0; padding-left: 18px; font-size: 14px; }
-    .btn { display: inline-block; background: var(--brand); color: #fff; border: 0; border-radius: 4px;
-           padding: 10px 20px; font: inherit; cursor: pointer; text-decoration: none; margin-top: 18px; }
-    .msg-ok { color: var(--ok); } .msg-err { color: var(--err); }
-    .muted { color: #666; font-size: 14px; }
-  </style>
+  <link rel="stylesheet" href="{% static 'css/site.css' %}">
+  {% block extra_head %}{% endblock %}
 </head>
 <body>
-  <header><a href="{% url 'home' %}">Vacant Quarter Auction</a></header>
+  <header class="site-header">
+    <a class="brand" href="{% url 'home' %}">Vacant Quarter Auction</a>
+    <nav>
+      {% if user.is_authenticated %}
+        <a href="{% url 'auctions:lobby' %}">Lobby</a>
+        <span class="who">Signed in as {{ user.get_username }}</span>
+        <form method="post" action="{% url 'accounts:logout' %}" class="inline">
+          {% csrf_token %}<button type="submit" class="link-btn">Log out</button>
+        </form>
+      {% else %}
+        <a href="{% url 'accounts:register' %}">Register</a>
+        <a href="{% url 'accounts:activate' %}">Activate</a>
+        <a href="{% url 'accounts:login' %}">Log in</a>
+      {% endif %}
+    </nav>
+  </header>
   <div class="notice">Training project: not an official SAIL website. All data and rules are placeholders.</div>
-  <main>{% block content %}{% endblock %}</main>
+  <main class="{% block main_class %}narrow{% endblock %}">
+    {% for message in messages %}
+      <div class="alert {% if message.level_tag == 'error' %}alert-err{% else %}alert-ok{% endif %}">{{ message }}</div>
+    {% endfor %}
+    {% block content %}{% endblock %}
+  </main>
+  {% block scripts %}{% endblock %}
 </body>
 </html>

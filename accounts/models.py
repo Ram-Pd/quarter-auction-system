@@ -1,6 +1,7 @@
 import secrets
 
 from django.conf import settings
+from django.contrib.auth import get_user_model
 from django.core.validators import RegexValidator
 from django.db import IntegrityError, models, transaction
 from django.db.models import Q
@@ -107,6 +108,10 @@ class Applicant(models.Model):
             if not self.application_no:
                 self.application_no = f"QA{self.application_date:%Y}{self.pk:06d}"
                 super().save(update_fields=["application_no"])
+            # Password reset emails go to User.email, so keep it equal to ours.
+            if self.user_id:
+                User = get_user_model()
+                User.objects.filter(pk=self.user_id).exclude(email=self.email).update(email=self.email)
 
     def _insert_with_new_urn(self, *args, **kwargs):
         """Try random URNs until one is free (the unique constraint is the referee)."""
