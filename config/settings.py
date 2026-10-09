@@ -40,6 +40,7 @@ ALLOWED_HOSTS = env('ALLOWED_HOSTS')
 # Application definition
 
 INSTALLED_APPS = [
+    'daphne',  # must be first: makes "runserver" serve WebSockets too (ASGI)
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -47,6 +48,7 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'django.contrib.humanize',  # number formatting in templates (1,234)
+    'channels',                 # WebSockets
     # Project apps
     'accounts',
     'auctions',
@@ -81,6 +83,21 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'config.wsgi.application'
+ASGI_APPLICATION = 'config.asgi.application'  # HTTP + WebSockets (Daphne)
+
+# Channel layer: how WebSocket messages reach every process.
+# No REDIS_URL -> in-memory layer: fine for ONE server process (development).
+# Several processes (production) need Redis: set REDIS_URL=redis://localhost:6379/0
+REDIS_URL = env('REDIS_URL', default='')
+if REDIS_URL:
+    CHANNEL_LAYERS = {
+        'default': {
+            'BACKEND': 'channels_redis.core.RedisChannelLayer',
+            'CONFIG': {'hosts': [REDIS_URL]},
+        },
+    }
+else:
+    CHANNEL_LAYERS = {'default': {'BACKEND': 'channels.layers.InMemoryChannelLayer'}}
 
 
 # Database
@@ -175,3 +192,12 @@ EMD_AMOUNT = Decimal(env('EMD_AMOUNT', default='10000'))
 AUTH_RATE_LIMIT_ATTEMPTS = env.int('AUTH_RATE_LIMIT_ATTEMPTS', default=5)        # per email/URN
 AUTH_RATE_LIMIT_IP_ATTEMPTS = env.int('AUTH_RATE_LIMIT_IP_ATTEMPTS', default=50)  # per IP address
 AUTH_RATE_LIMIT_WINDOW_SECONDS = env.int('AUTH_RATE_LIMIT_WINDOW_SECONDS', default=15 * 60)
+
+# Bidding (auctions/bidding.py). Placeholders: NOT official SAIL rules.
+# A bid placed when less than this many seconds remain extends the deadline
+# by the auction's own anti_snipe_extension (CLAUDE.md: "the final minute").
+AUCTION_ANTI_SNIPE_WINDOW_SECONDS = env.int('AUCTION_ANTI_SNIPE_WINDOW_SECONDS', default=60)
+# Minimum gap between two bids from the same browser connection (anti-flooding).
+AUCTION_BID_MIN_INTERVAL_SECONDS = env.float('AUCTION_BID_MIN_INTERVAL_SECONDS', default=1.0)
+# How many recent bids the auction page shows.
+AUCTION_RECENT_BIDS_SHOWN = 20

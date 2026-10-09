@@ -1,12 +1,14 @@
 from django.contrib import admin, messages
 from django.core.exceptions import PermissionDenied
+from django.db import transaction
 from django.shortcuts import redirect
 from django.template.response import TemplateResponse
 from django.urls import path, reverse
 
+from . import realtime
 from .forms import QuarterImportForm
 from .importers import EXPECTED_HEADERS, import_quarters
-from .models import Auction, Quarter
+from .models import Auction, Bid, Participation, Quarter
 
 
 @admin.register(Quarter)
@@ -55,6 +57,23 @@ class QuarterAdmin(admin.ModelAdmin):
         return TemplateResponse(request, "admin/auctions/quarter/import.html", context)
 
 
+class BidInline(admin.TabularInline):
+    """Accepted bids, read-only, shown on the auction page. Codes only, no identities."""
+    model = Bid
+    fields = ("created_at", "bidder", "amount", "previous_highest", "deadline_extended_to")
+    readonly_fields = fields
+    extra = 0
+    can_delete = False
+    ordering = ("-created_at",)
+
+    @admin.display(description="Bidder")
+    def bidder(self, obj):
+        return obj.participation.anonymous_code
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+
 @admin.register(Auction)
 class AuctionAdmin(admin.ModelAdmin):
     list_display = ("__str__", "quarter", "start_time", "end_time", "phase_display",
@@ -72,7 +91,7 @@ class AuctionAdmin(admin.ModelAdmin):
         return obj.phase().label
 
     def get_readonly_fields(self, request, obj=None):
-        always = ["status", "current_highest_bid", "created_at", "updated_at"]
+        always = ["status", "current_highest_bid", "original_end_time", "created_at", "updated_at"]
         if obj is None:  # adding
             return always
         if obj.status != Auction.Status.OPEN:  # closed / cancelled: history, read-only
@@ -88,6 +107,17 @@ class AuctionAdmin(admin.ModelAdmin):
             kwargs["queryset"] = Quarter.objects.filter(status=Quarter.Status.VACANT)
         return super().formfield_for_foreignkey(db_field, request, **kwargs)
 
+    def get_inlines(self, request, obj):
+        return [BidInline] if obj else []  # a new auction has no bids to show
+
+    def save_model(self, request, obj, form, change):
+        if change and "end_time" in form.changed_data:
+            obj.original_end_time = obj.end_time  # an admin re-scheduled the deadline
+        super().save_model(request, obj, form, change)
+        if change:
+            # Open auction pages update their deadline/status immediately.
+            transaction.on_commit(lambda: realtime.broadcast_state(obj))
+
     def has_delete_permission(self, request, obj=None):
         return False  # keep every auction for the audit trail; use "Cancel" instead
 
@@ -102,3 +132,58 @@ class AuctionAdmin(admin.ModelAdmin):
         if skipped:
             self.message_user(request, f"Skipped {skipped} auction(s) that were not open.",
                               messages.WARNING)
+
+
+@admin.register(Bid)
+class BidAdmin(admin.ModelAdmin):
+    """
+    Audit view of every accepted bid. Read-only: bids are never edited or deleted.
+    Shows the anonymous code only; identities are in Participation (superusers only).
+    """
+    list_display = ("created_at", "auction", "bidder", "amount", "previous_highest", "deadline_extended_to")
+    list_filter = ("auction",)
+    search_fields = ("auction__quarter__quarter_no",)
+    list_select_related = ("auction__quarter", "participation")
+    exclude = ("participation",)  # the edit form would otherwise list applicants
+    readonly_fields = ("auction", "bidder", "amount", "created_at", "client_bid_id",
+                       "previous_highest", "deadline_extended_to")
+
+    @admin.display(description="Bidder")
+    def bidder(self, obj):
+        return obj.participation.anonymous_code
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(Participation)
+class ParticipationAdmin(admin.ModelAdmin):
+    """
+    The applicant <-> anonymous code mapping. CONFIDENTIAL: superusers only,
+    for audits, disputes and contacting the winner.
+    """
+    list_display = ("auction", "anonymous_code", "applicant", "joined_at")
+    list_filter = ("auction",)
+    search_fields = ("applicant__application_no", "applicant__urn")
+    readonly_fields = ("auction", "applicant", "bidder_number", "joined_at")
+
+    def has_module_permission(self, request):
+        return request.user.is_superuser
+
+    def has_view_permission(self, request, obj=None):
+        return request.user.is_superuser
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False

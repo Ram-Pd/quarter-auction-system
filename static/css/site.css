@@ -71,6 +71,27 @@ table.data td.wrap { white-space: normal; min-width: 160px; }
 .badge-closing { background: #fff3cd; color: #6b4e00; }
 .badge-closed, .badge-cancelled { background: #eee; color: var(--muted); }
 
+/* Auction page (auctions/templates/auctions/auction_room.html) */
+.room { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
+table.details { width: 100%; border-collapse: collapse; font-size: 15px; }
+table.details th { text-align: left; color: var(--muted); font-weight: normal; padding: 5px 12px 5px 0; width: 45%; }
+table.details td { padding: 5px 0; }
+.live-row { display: flex; gap: 24px; flex-wrap: wrap; margin-bottom: 14px; }
+.live-row > div { flex: 1; min-width: 140px; }
+.big { font-size: 1.6rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+.urgent { color: var(--live); }
+.conn { font-weight: 600; }
+.conn-ok { color: var(--ok); }
+.conn-wait { color: #b26a00; }
+.conn-bad { color: var(--err); }
+.btn-secondary { background: #fff; color: var(--brand); border: 1px solid var(--brand); }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+.bid-message { min-height: 1.5em; margin-top: 12px; font-weight: 600; }
+tr.mine td { background: #f3f8ec; }
+tr.flash td { animation: flash 2s ease-out; }
+@keyframes flash { from { background: #fff3cd; } to { background: transparent; } }
+@media (max-width: 900px) { .room { grid-template-columns: 1fr; } }
+
 /* Small screens (phones) */
 @media (max-width: 600px) {
   main { margin: 16px auto; }

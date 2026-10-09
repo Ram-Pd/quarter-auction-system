@@ -4,6 +4,8 @@ from decimal import Decimal
 
 from django.utils import timezone
 
+from accounts.tests.factories import make_activated_applicant
+from auctions.bidding import join_auction
 from auctions.models import Auction, Quarter
 
 
@@ -31,3 +33,9 @@ def make_auction(quarter=None, starts_in=timedelta(minutes=-5), lasts=timedelta(
     data = {"quarter": quarter, "start_time": start, "end_time": start + lasts}
     data.update(overrides)
     return Auction.objects.create(**data)
+
+
+def make_bidder(auction, n):
+    """An activated applicant who has joined `auction`. Returns (applicant, user, participation)."""
+    applicant, user = make_activated_applicant(n)
+    return applicant, user, join_auction(auction, applicant)

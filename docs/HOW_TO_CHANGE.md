@@ -21,7 +21,10 @@ under **PROJECT SETTINGS**.
 | Wrong attempts allowed per IP address | `AUTH_RATE_LIMIT_IP_ATTEMPTS=50` | 50 |
 | Lock-out window (seconds) | `AUTH_RATE_LIMIT_WINDOW_SECONDS=900` | 900 (15 min) |
 | Send real email via SMTP | `EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend` plus `EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_HOST_USER`, `EMAIL_HOST_PASSWORD`, `EMAIL_USE_TLS`, `DEFAULT_FROM_EMAIL` | Emails saved as `.eml` files in `sent_emails/` |
-| Use PostgreSQL | `DATABASE_URL=postgres://user:pass@localhost:5432/dbname` | SQLite file `db.sqlite3` |
+| Database (PostgreSQL required for bidding) | `DATABASE_URL=postgres://user:pass@localhost:5432/dbname` | SQLite file `db.sqlite3` |
+| Anti-snipe window ("final minute") | `AUCTION_ANTI_SNIPE_WINDOW_SECONDS=60` | 60 |
+| Minimum gap between bids from one browser tab | `AUCTION_BID_MIN_INTERVAL_SECONDS=1.0` | 1.0 |
+| Redis for WebSockets across several processes | `REDIS_URL=redis://localhost:6379/0` | In-memory (one process) |
 
 In `config/settings.py` (not in `.env`):
 - `PASSWORD_RESET_TIMEOUT`: reset link lifetime in seconds. The pages and email update automatically.
@@ -44,6 +47,21 @@ In `config/settings.py` (not in `.env`):
 | Default minimum increment / anti-snipe extension | `auctions/models.py`: `Auction.min_increment` / `anti_snipe_extension` defaults |
 | Auction phases (Upcoming / Live / Closing) | `auctions/models.py`: `Auction.phase()` |
 | Fields locked once an auction starts | `auctions/admin.py`: `AuctionAdmin.LOCKED_AFTER_START` |
+| **Bid validation rules** (live, joined, minimum, self-outbid, duplicates, anti-sniping) | `auctions/bidding.py`: `place_bid()` (rules numbered in its docstring) |
+| Joining an auction / how "Bidder N" codes are assigned | `auctions/bidding.py`: `join_auction()` |
+| Accepted amount format (decimals, max) | `auctions/bidding.py`: `parse_amount()` |
+| How many recent bids are shown | `config/settings.py`: `AUCTION_RECENT_BIDS_SHOWN` |
+
+## 2b. Real-time (WebSockets)
+
+| What | Where |
+|---|---|
+| **What browsers are sent** (privacy-critical) | `auctions/realtime.py`: `public_bid()`, `auction_state()`, `snapshot()` |
+| Who may connect, what messages are accepted | `auctions/consumers.py`: `AuctionConsumer` |
+| WebSocket URL | `auctions/routing.py` |
+| HTTP + WebSocket wiring, session login for sockets | `config/asgi.py` |
+| Browser side: drawing updates, sending bids, reconnecting | `auctions/static/auctions/auction_room.js` |
+| Auction page layout | `auctions/templates/auctions/auction_room.html` |
 | Quarter types A/B/C/D, quarter statuses | `auctions/models.py`: `Quarter.QuarterType`, `Quarter.Status` |
 
 ---
@@ -93,7 +111,9 @@ In `config/settings.py` (not in `.env`):
 | What | Where |
 |---|---|
 | Quarter list columns / filters, Excel import page | `auctions/admin.py`: `QuarterAdmin` |
-| Auction admin, cancel action | `auctions/admin.py`: `AuctionAdmin` |
+| Auction admin, cancel action, bid list on an auction | `auctions/admin.py`: `AuctionAdmin`, `BidInline` |
+| Bid audit list (read-only, codes only) | `auctions/admin.py`: `BidAdmin` |
+| Applicant ↔ bidder-code mapping (superusers only) | `auctions/admin.py`: `ParticipationAdmin` |
 | Applicant admin, resend-documents action | `accounts/admin.py`: `ApplicantAdmin` |
 
 ---
@@ -122,3 +142,8 @@ Commit the new file in `*/migrations/` together with the model change.
 | Excel import | `auctions/tests/test_import.py` |
 | Admin screens | `auctions/tests/test_admin.py` |
 | Lobby, auction admin | `auctions/tests/test_lobby.py` |
+| Bidding rules, anti-sniping | `auctions/tests/test_bidding.py` |
+| **Simultaneous bids** (PostgreSQL only) | `auctions/tests/test_concurrency.py` |
+| WebSocket consumer | `auctions/tests/test_consumers.py` |
+| Auction page, admin privacy | `auctions/tests/test_auction_room.py` |
+| Demo data command | `auctions/tests/test_seed_demo.py` |

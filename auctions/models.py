@@ -110,7 +110,11 @@ class Auction(models.Model):
     )
     start_time = models.DateTimeField()
     end_time = models.DateTimeField(
-        help_text="Current deadline. Anti-sniping (Milestone 4) may push it later.",
+        help_text="Current deadline. Anti-sniping may push it later.",
+    )
+    original_end_time = models.DateTimeField(
+        null=True, editable=False,
+        help_text="The scheduled deadline, before any anti-snipe extensions (audit).",
     )
     status = models.CharField(max_length=16, choices=Status.choices, default=Status.OPEN,
                               db_index=True)
@@ -126,7 +130,7 @@ class Auction(models.Model):
     )
     current_highest_bid = models.DecimalField(
         max_digits=12, decimal_places=2, null=True, blank=True, editable=False,
-        help_text="Kept up to date by the bidding code (Milestone 4).",
+        help_text="Kept up to date by the bidding code (auctions/bidding.py).",
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -179,6 +183,8 @@ class Auction(models.Model):
     # ---------- state changes ----------
 
     def save(self, *args, **kwargs):
+        if self.original_end_time is None:
+            self.original_end_time = self.end_time
         with transaction.atomic():
             creating = self._state.adding
             super().save(*args, **kwargs)
@@ -186,13 +192,18 @@ class Auction(models.Model):
                 Quarter.objects.filter(pk=self.quarter_id).update(status=Quarter.Status.IN_AUCTION)
 
     def cancel(self):
-        """Cancel an open auction and free the quarter again."""
-        if self.status != self.Status.OPEN:
-            raise ValidationError("Only open auctions can be cancelled.")
+        """Cancel an open auction and free the quarter again. Bids are kept for audit."""
+        from . import realtime  # imported here: realtime.py imports this module
+
         with transaction.atomic():
+            # Same lock as bidding, so a bid can't slip in while we cancel.
+            locked = Auction.objects.select_for_update().get(pk=self.pk)
+            if locked.status != self.Status.OPEN:
+                raise ValidationError("Only open auctions can be cancelled.")
             self.status = self.Status.CANCELLED
             self.save(update_fields=["status", "updated_at"])
             Quarter.objects.filter(pk=self.quarter_id).update(status=Quarter.Status.VACANT)
+            transaction.on_commit(lambda: realtime.broadcast_state(self))
 
     # ---------- computed values (nothing stored) ----------
 
@@ -217,3 +228,72 @@ class Auction(models.Model):
         if self.current_highest_bid is None:
             return self.quarter.base_rate
         return self.current_highest_bid + self.min_increment
+
+
+class Participation(models.Model):
+    """
+    An applicant taking part in one auction, under an anonymous per-auction code.
+
+    PRIVACY: this table is the ONLY link between a real applicant and their
+    "Bidder N" code. Public pages, bid history and WebSocket messages show
+    only the code. Kept so eligibility can be checked, bids audited, disputes
+    resolved and the real winner notified.
+    """
+
+    applicant = models.ForeignKey("accounts.Applicant", on_delete=models.PROTECT,
+                                  related_name="participations")
+    auction = models.ForeignKey(Auction, on_delete=models.PROTECT, related_name="participations")
+    # Shown as "Bidder 7". Numbered 1, 2, 3... in join order within each auction,
+    # so the same applicant gets unrelated numbers in different auctions.
+    bidder_number = models.PositiveIntegerField()
+    joined_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["auction", "bidder_number"]
+        constraints = [
+            models.UniqueConstraint(fields=["applicant", "auction"],
+                                    name="one_participation_per_applicant_per_auction"),
+            models.UniqueConstraint(fields=["auction", "bidder_number"],
+                                    name="unique_bidder_number_per_auction"),
+        ]
+
+    @property
+    def anonymous_code(self):
+        return f"Bidder {self.bidder_number}"
+
+    def __str__(self):
+        return f"{self.anonymous_code} in auction #{self.auction_id}"
+
+
+class Bid(models.Model):
+    """
+    An ACCEPTED bid. Rejected attempts are never stored here.
+    Rows are never edited or deleted: this is the audit trail.
+    """
+
+    auction = models.ForeignKey(Auction, on_delete=models.PROTECT, related_name="bids")
+    participation = models.ForeignKey(Participation, on_delete=models.PROTECT, related_name="bids")
+    amount = models.DecimalField("amount (Rs.)", max_digits=12, decimal_places=2)
+    created_at = models.DateTimeField(default=timezone.now, db_index=True)
+    # Random id made by the browser for each click. The same id sent twice
+    # (double-click, resend after reconnect) is recognised as a duplicate.
+    client_bid_id = models.UUIDField()
+    # Audit details, recorded at the moment the bid was accepted:
+    previous_highest = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    deadline_extended_to = models.DateTimeField(
+        null=True, blank=True, help_text="Set when this bid triggered an anti-snipe extension.")
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [models.Index(fields=["auction", "-amount"], name="bid_auction_amount_idx")]
+        constraints = [
+            models.CheckConstraint(condition=Q(amount__gt=0), name="bid_amount_positive"),
+            models.UniqueConstraint(fields=["participation", "client_bid_id"],
+                                    name="no_duplicate_bid_submission"),
+            # Every accepted bid beats the previous one, so amounts never repeat
+            # within an auction. Backstop in case locking ever fails.
+            models.UniqueConstraint(fields=["auction", "amount"], name="unique_bid_amount_per_auction"),
+        ]
+
+    def __str__(self):
+        return f"Rs. {self.amount} by {self.participation.anonymous_code}"

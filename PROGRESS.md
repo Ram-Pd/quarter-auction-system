@@ -1,8 +1,9 @@
 # PROGRESS: SAIL Vacant Quarter Auction System
 
-_Last updated: 2026-10-09, end of Milestone 3_
+_Last updated: 2026-10-09, end of Milestone 4_
 
-**Test status:** 112 automated tests, all passing (`python manage.py test`).
+**Test status:** 162 automated tests, all passing on PostgreSQL 17 (`python manage.py test`).
+**Before running anything:** start PostgreSQL with `.\scripts\start_postgres.ps1` (it does not auto-start).
 
 See also: `README.md` (setup/run/demo) and `docs/HOW_TO_CHANGE.md` (which file to edit for what).
 
@@ -57,9 +58,56 @@ See also: `README.md` (setup/run/demo) and `docs/HOW_TO_CHANGE.md` (which file t
 - **Maintainability:** shared form include, site CSS file with colour variables, a context processor for settings-driven text, test factories, `README.md`, `docs/HOW_TO_CHANGE.md`.
 - **Verified end to end** on the real server: wrong URN, activation, logout, lobby redirect, login, lobby contents, password reset via the emailed link, login with the new password. Lobby screenshots checked at desktop and narrow widths.
 
+## Milestone 4: PostgreSQL, Channels, live anonymous bidding ✅ COMPLETE
+- **PostgreSQL 17.11**, portable install (no admin rights): programs in `%USERPROFILE%\pgsql`, data in `%USERPROFILE%\pgsql-data`, app DB `sail_auction` / user `sail_user` (CREATEDB for tests), localhost only, scram-sha-256 passwords. `scripts/start_postgres.ps1` and `stop_postgres.ps1`. `DATABASE_URL` is in `.env`.
+- **Channels + Daphne:**
+  - `daphne` first in INSTALLED_APPS, so `runserver` is ASGI.
+  - `config/asgi.py` routes HTTP and WebSocket; `AuthMiddlewareStack` provides session login and `AllowedHostsOriginValidator` blocks cross-site sockets.
+  - Channel layer is in-memory by default; `REDIS_URL` switches it to Redis.
+- **Models:**
+  - `Participation`: applicant + auction + `bidder_number`, shown as "Bidder N". Unique per (applicant, auction) and per (auction, number).
+  - `Bid`: accepted bids only; never edited or deleted. Stores `client_bid_id` (duplicate protection), `previous_highest` and `deadline_extended_to` for audit.
+  - DB backstops: unique (participation, client_bid_id); unique (auction, amount); amount > 0.
+  - `Auction.original_end_time` keeps the scheduled deadline (data migration filled existing rows).
+- **Bidding service** (`auctions/bidding.py`), everything inside `transaction.atomic()` with `select_for_update(of=("self",))` on the Auction row:
+  1. The auction must be LIVE.
+  2. The applicant must have joined.
+  3. The same `client_bid_id` returns the earlier bid (duplicate, not a new bid).
+  4. First bid ≥ base rate; later bids ≥ highest + increment.
+  5. You can't outbid yourself.
+  6. A bid in the final 60 s sets the deadline to now + extension, and never shortens it.
+  - Broadcast happens only after commit (`transaction.on_commit`).
+  - `join_auction` numbers codes under the same lock. `Auction.cancel()` also takes the lock and broadcasts.
+- **Realtime** (`auctions/realtime.py`): the only place browser messages are built. They contain codes, amounts and times only. Includes `server_now` for clock correction. One group per auction (`auction_<id>`).
+- **Consumer** (`auctions/consumers.py`):
+  - Per-auction authorisation: logged in (else close 4401); auction exists (else 4404); joined participant or staff watcher (else 4403).
+  - Messages: `bid` and `sync`. Rejections are sent only to the sender.
+  - Anti-flooding: 1 bid per second per connection.
+  - Staff can watch but not bid.
+- **Auction page** (`/auctions/<id>/`, `auction_room.js`):
+  - Join button, bid form, "Use minimum", live highest/minimum/countdown (red in the final minute), extension notice, bid history with "(you)", connection status.
+  - Auto-reconnect with backoff (1 s to 15 s) and resync snapshot. Resync when the tab becomes visible. Bid button disabled while offline or awaiting a reply, with a 10 s timeout.
+  - "You have been outbid" notice. The bid box follows the new minimum.
+- **Lobby:** "Open" button per auction and a "Joined" marker.
+- **Admin:**
+  - Bids are read-only and show the code only; the auction page lists its bids read-only.
+  - **Participation (identity ↔ code) is superusers only.**
+  - Admin edits to an auction are pushed live to open pages.
+- **Tests:**
+  - `test_bidding.py`: every rule, anti-sniping, broadcast-after-commit.
+  - `test_concurrency.py`: 10 threads bidding at the same instant on PostgreSQL; exactly one winner, the chain stays valid, simultaneous joins get unique codes. **Verified that 2 of these tests FAIL when `select_for_update` is removed.**
+  - `test_consumers.py`: authorisation, broadcast, privacy, isolation between auctions, resync, flooding, cancel push.
+  - `test_auction_room.py`: page, join, admin privacy.
+- **Real-browser end-to-end** (headless Edge via DevTools + a second WebSocket client, on Daphne + PostgreSQL):
+  - The page connects and shows Live; the other bidder's bid appears instantly; a bid typed in the page is accepted.
+  - Server killed: "Reconnecting…" and bidding disabled. Server restarted: auto-reconnect, and a bid missed while offline is shown, with the outbid message.
+
 ## Current problems
 - None known.
-- PostgreSQL is **not installed** yet. It's needed before Milestone 4.
+- PostgreSQL is a portable install and **must be started after every reboot** (`scripts\start_postgres.ps1`). The portable binaries are not code-signed (normal for EnterpriseDB's zip); they were downloaded over HTTPS from EnterpriseDB, the source postgresql.org links to.
+- Redis is not installed. It isn't needed for one server process; it's required for multi-process production (`REDIS_URL`).
+- The browser display of an anti-snipe extension is covered by unit tests on the server side, but wasn't exercised in the real-browser run.
+- Auctions whose deadline has passed stay "Closing" until the closure job exists (Milestone 5).
 - Registration has no CAPTCHA or rate limiting (out of scope for now; worth adding before any public deployment).
 - The registration form says "email already registered", which reveals that an email address is registered. Accepted for usability; revisit if the mentor considers it a privacy issue.
 - `manage.py check --deploy` shows 5 warnings (DEBUG, HTTPS, secure cookies, HSTS). Expected in development; production settings are planned for Milestone 5.
@@ -80,6 +128,12 @@ See also: `README.md` (setup/run/demo) and `docs/HOW_TO_CHANGE.md` (which file t
 - The first bid must be at least the quarter's base rate. Later bids must beat the highest bid by the auction's minimum increment.
 - Default minimum increment Rs. 100 and default anti-snipe extension 2 minutes (both editable per auction).
 - Staff accounts may view the lobby (for monitoring and demos).
+- A bidder cannot outbid themselves while holding the highest bid.
+- Equal bids: the first one accepted wins; later equal bids are "too low" (open question 6).
+- Anti-snipe window is 60 s (setting). The new deadline is now + the auction's extension, never earlier than the current deadline.
+- Bidder codes are numbered in join order per auction ("Bidder 1, 2, …").
+- Staff may watch an auction page live but cannot bid.
+- Admins may cancel an auction even after bids were placed; the bids are kept for audit.
 - All sample figures are fake.
 
 ## Decisions made
@@ -95,13 +149,15 @@ See also: `README.md` (setup/run/demo) and `docs/HOW_TO_CHANGE.md` (which file t
 - Auction status stores only facts the clock can't provide. Upcoming / Live / Closing is computed (no job needed to flip states).
 - Business actions live in `services.py` / model methods. Views stay thin.
 
-## Next steps: Milestone 4
-1. PostgreSQL (needed for `select_for_update()` row locking).
-2. Django Channels + Daphne; channel layer (in-memory for development, Redis for multi-process).
-3. Participation model (anonymous "Bidder N" per auction) and Bid model.
-4. Bid placement service: transaction + `select_for_update()` on the Auction row, server-side validation, duplicate protection, anti-sniping.
-5. WebSocket consumer per auction: authorisation, broadcast of accepted bids, resync on reconnect.
-6. Auction page with live bid history and countdown.
-7. Concurrency tests on PostgreSQL.
+- Bid rules live in one function (`place_bid`), and browser messages are built in one module (`realtime.py`), so the rules and the privacy guarantee are each in one place.
+- Synchronous consumer (runs in a thread), so it can use the ORM like a normal view.
+- Bidder codes are stored as a number (`bidder_number`) and displayed as "Bidder N". The brief's "unique (auction, anonymous_code)" is enforced as unique (auction, bidder_number).
+
+## Next steps: Milestone 5
+1. Background closure job: find OPEN auctions past end_time and close them atomically and idempotently (lock, re-check, set CLOSED / CLOSED_NO_BIDS, store winner, quarter → Allotted only with a winner). Choose the scheduler (explain options).
+2. Winner email, exactly once (guard against duplicates). Loser emails off by default.
+3. Broadcast the closure to open pages; show results in the lobby ("Recently closed").
+4. Tests: idempotency with simultaneous closers, no-bid outcome, email once.
+5. Production settings (HTTPS, secure cookies, HSTS, Redis cache/channel layer), documentation (architecture, ER and workflow diagrams, demo script).
 
 Open questions to confirm with the mentor: is the EMD one payment for any quarter, or one per quarter? Can one person bid on several quarters at once?
