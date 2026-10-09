@@ -1,0 +1,9 @@
+Django==5.2.18
+django-environ==0.14.0
+openpyxl==3.1.5
+reportlab==5.0.1
+qrcode[pil]==8.2
+pillow==12.3.0
+
+# Used only by the automated tests (reads text back out of generated PDFs)
+pypdf==6.20.0

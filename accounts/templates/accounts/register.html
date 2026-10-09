@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Register{% endblock %}
+{% block content %}
+<div class="card">
+  <h1>Applicant Registration</h1>
+  <p class="muted">All fields are required. You do not choose a quarter now: after your account is
+    activated you will log in and choose from the quarters on auction.</p>
+
+  <form method="post" novalidate>
+    {% csrf_token %}
+    {{ form.non_field_errors }}
+    {% for field in form %}
+      {% if field.name == "declaration" %}
+        <div class="check" style="margin-top:18px">
+          {{ field.errors }}
+          {{ field }} {{ field.label_tag }}
+        </div>
+      {% else %}
+        {{ field.label_tag }}
+        {{ field.errors }}
+        {{ field }}
+      {% endif %}
+    {% endfor %}
+    <button type="submit" class="btn">Register</button>
+  </form>
+</div>
+{% endblock %}

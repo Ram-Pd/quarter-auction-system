@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Home{% endblock %}
+{% block content %}
+<div class="card">
+  <h1>Vacant Quarter Auction</h1>
+  <p>How it works:</p>
+  <ol>
+    <li>Register below. You will receive your Application Form and Intimation Slip (with your URN) by email.</li>
+    <li>Pay the EMD through SBI Collect using your URN.</li>
+    <li>After the auction office verifies your payment, activate your account with your email and URN.</li>
+    <li>Log in, see the quarters on auction, and choose which to bid on.</li>
+  </ol>
+  <a class="btn" href="{% url 'accounts:register' %}">Register</a>
+</div>
+{% endblock %}

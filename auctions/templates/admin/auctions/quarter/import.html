@@ -1,0 +1,56 @@
+{% extends "admin/base_site.html" %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+  <a href="{% url 'admin:index' %}">Home</a>
+  &rsaquo; <a href="{% url 'admin:app_list' app_label=opts.app_label %}">{{ opts.app_config.verbose_name }}</a>
+  &rsaquo; <a href="{% url 'admin:auctions_quarter_changelist' %}">{{ opts.verbose_name_plural|capfirst }}</a>
+  &rsaquo; Import from Excel
+</div>
+{% endblock %}
+
+{% block content %}
+<div id="content-main">
+
+  {% if result and result.errors %}
+    <p class="errornote">
+      Nothing was imported. The file has {{ result.errors|length }} error{{ result.errors|length|pluralize }}.
+      Fix them and upload the file again.
+    </p>
+    <table>
+      <thead><tr><th>Row</th><th>Column</th><th>Problem</th></tr></thead>
+      <tbody>
+        {% for e in result.errors %}
+          <tr>
+            <td>{{ e.row|default:"-" }}</td>
+            <td>{{ e.column|default:"-" }}</td>
+            <td>{{ e.message }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <br>
+  {% endif %}
+
+  <form method="post" enctype="multipart/form-data">
+    {% csrf_token %}
+    <fieldset class="module aligned">
+      {% for field in form %}
+        <div class="form-row">
+          {{ field.errors }}
+          {{ field.label_tag }} {{ field }}
+          <div class="help">{{ field.help_text }}</div>
+        </div>
+      {% endfor %}
+    </fieldset>
+    <p>
+      The first row must contain exactly these headers, in this order:<br>
+      <code>{{ expected_headers|join:" | " }}</code><br>
+      Blank rows are skipped. The import is all-or-nothing: if any row has an error, no quarters are saved.
+    </p>
+    <div class="submit-row">
+      <input type="submit" value="Upload and import" class="default">
+    </div>
+  </form>
+</div>
+{% endblock %}
