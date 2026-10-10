@@ -96,6 +96,16 @@ class Applicant(models.Model):
             ),
         ]
 
+    @classmethod
+    def for_user(cls, user):
+        """
+        The activated applicant behind a login, or None (not logged in, staff,
+        or an account with no applicant). The ONE place this lookup is written.
+        """
+        if user is None or not user.is_authenticated:
+            return None
+        return cls.objects.filter(user=user, is_activated=True).first()
+
     def save(self, *args, **kwargs):
         self.email = self.email.strip().lower()
         # One transaction: no other connection ever sees a row without an

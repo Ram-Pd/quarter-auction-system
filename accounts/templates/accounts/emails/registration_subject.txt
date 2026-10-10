@@ -1,0 +1,1 @@
+Auction registration {{ applicant.application_no }}

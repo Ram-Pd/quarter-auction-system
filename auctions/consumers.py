@@ -60,7 +60,7 @@ class AuctionConsumer(JsonWebsocketConsumer):
 
         # AUTHORISATION, per auction: only applicants who joined THIS auction may
         # connect (and bid). Staff may connect to watch, but cannot bid.
-        applicant = Applicant.objects.filter(user=user, is_activated=True).first()
+        applicant = Applicant.for_user(user)
         if applicant:
             self.participation = Participation.objects.filter(auction=auction, applicant=applicant).first()
         if self.participation is None and not user.is_staff:

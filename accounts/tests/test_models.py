@@ -1,10 +1,11 @@
-from django.contrib.auth.models import User
+from django.contrib.auth.models import AnonymousUser, User
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError
 from django.db.models import ProtectedError
 from django.test import TestCase
 
 from accounts.models import Applicant
+from accounts.tests.factories import make_activated_applicant
 
 
 def make_applicant(**overrides):
@@ -62,3 +63,19 @@ class ApplicantModelTests(TestCase):
         make_applicant(user=user, is_verified=True, is_activated=True).save()
         with self.assertRaises(ProtectedError):
             user.delete()
+
+
+class ApplicantForUserTests(TestCase):
+    """Applicant.for_user(): the one lookup used by views, the decorator and the WebSocket."""
+
+    def test_activated_applicant_is_found(self):
+        applicant, user = make_activated_applicant()
+        self.assertEqual(Applicant.for_user(user), applicant)
+
+    def test_user_without_applicant_gives_none(self):
+        staff = User.objects.create_user("staff", password="x", is_staff=True)
+        self.assertIsNone(Applicant.for_user(staff))
+
+    def test_anonymous_or_missing_user_gives_none(self):
+        self.assertIsNone(Applicant.for_user(AnonymousUser()))
+        self.assertIsNone(Applicant.for_user(None))

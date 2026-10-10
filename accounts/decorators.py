@@ -7,7 +7,7 @@ from .models import Applicant
 
 
 def is_activated_applicant(user):
-    return user.is_authenticated and Applicant.objects.filter(user=user, is_activated=True).exists()
+    return Applicant.for_user(user) is not None
 
 
 def applicant_required(view_func):

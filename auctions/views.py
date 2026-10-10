@@ -15,11 +15,6 @@ from .bidding import BidRejected, join_auction, other_active_auction
 from .models import Auction, Participation
 
 
-def _applicant_for(user):
-    """The activated applicant behind a login, or None (e.g. staff)."""
-    return Applicant.objects.filter(user=user, is_activated=True).first()
-
-
 @applicant_required
 def lobby(request):
     """
@@ -31,7 +26,7 @@ def lobby(request):
                      .select_related("quarter")
                      .order_by("end_time"))
 
-    applicant = _applicant_for(request.user)
+    applicant = Applicant.for_user(request.user)
     joined_ids = set(Participation.objects.filter(applicant=applicant).values_list("auction_id", flat=True)
                      ) if applicant else set()
 
@@ -63,7 +58,7 @@ def lobby(request):
 def auction_room(request, auction_id):
     """The bidding page for one auction. Live updates come over the WebSocket."""
     auction = get_object_or_404(Auction.objects.select_related("quarter"), pk=auction_id)
-    applicant = _applicant_for(request.user)
+    applicant = Applicant.for_user(request.user)
     participation = (Participation.objects.filter(auction=auction, applicant=applicant).first()
                      if applicant else None)
     phase = auction.phase()
@@ -87,7 +82,7 @@ def auction_room(request, auction_id):
 @applicant_required
 def join(request, auction_id):
     auction = get_object_or_404(Auction, pk=auction_id)
-    applicant = _applicant_for(request.user)
+    applicant = Applicant.for_user(request.user)
     if applicant is None:
         raise PermissionDenied  # staff accounts watch, they don't bid
     try:

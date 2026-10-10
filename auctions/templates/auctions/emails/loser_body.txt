@@ -1,0 +1,6 @@
+{% autoescape off %}Dear {{ applicant.name }},
+
+The auction for quarter {{ quarter.quarter_no }} has closed. Your bid was not the highest this time.
+
+Thank you for taking part. Other quarters may be auctioned later.
+{% include "emails/training_footer.txt" %}{% endautoescape %}

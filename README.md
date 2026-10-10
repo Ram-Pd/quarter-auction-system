@@ -101,12 +101,14 @@ python manage.py test
 ## Project layout
 
 ```
-config/      settings, top-level URLs, ASGI (HTTP + WebSockets), email backend
+config/      settings, top-level URLs, ASGI (HTTP + WebSockets), email helpers
 accounts/    applicants: registration, URN, PDFs, email, activation, login
 auctions/    quarters, Excel import, auctions, lobby, bidding, WebSockets
 scripts/     start/stop the portable PostgreSQL server
-templates/   site-wide templates (base layout, home page, shared includes)
+templates/   site-wide templates (base layout, home page, shared includes, email footer)
 static/      site-wide CSS
 sample_data/ FAKE Excel files + generator script
 docs/        project documentation
 ```
+
+File-by-file map and "how do I change X" recipes: `docs/HOW_TO_CHANGE.md`.

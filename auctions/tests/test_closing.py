@@ -148,7 +148,7 @@ class WinnerEmailTests(TestCase):
         self.assertIn("not the highest", loser_mail.body)
 
     def test_failed_email_is_retried_later_and_sent_once(self):
-        with mock.patch("auctions.emails.EmailMessage.send", side_effect=ConnectionError("SMTP down")), \
+        with mock.patch("django.core.mail.EmailMessage.send", side_effect=ConnectionError("SMTP down")), \
                 self.assertLogs("auctions.closing", level="ERROR"):
             self.close()
         self.assertIsNone(self.auction.winner_notified_at)  # auction closed, email pending

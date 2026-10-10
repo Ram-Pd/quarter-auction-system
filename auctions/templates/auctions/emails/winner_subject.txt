@@ -1,0 +1,1 @@
+You won the auction for quarter {{ quarter.quarter_no }}

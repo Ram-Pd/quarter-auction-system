@@ -136,6 +136,20 @@ See also: `README.md` (setup/run/demo) and `docs/HOW_TO_CHANGE.md` (which file t
   - The countdown turned red; at the deadline the page switched to Closed with "Congratulations, you won!".
   - Exactly one winner email was written. The losing bidder's page shows "Won by Bidder 1" and "Bidding closed".
 
+## Code organisation pass (2026-10-10) ✅ COMPLETE
+Goal: make future changes easy to find and safe to make. No behaviour changed.
+- **Email wording moved out of Python into `.txt` templates** (`accounts/templates/accounts/emails/`,
+  `auctions/templates/auctions/emails/`, shared footer `templates/emails/training_footer.txt`).
+  New helper `config/mail.py: build_email()`. Verified: the registration, winner and loser emails
+  render **byte-for-byte identical** to before (compared before/after output).
+- **One lookup for "which applicant is this user"**: `Applicant.for_user()`, used by the views,
+  the `@applicant_required` decorator and the WebSocket consumer (was written 3 times). 3 new tests.
+- `AUCTION_RECENT_BIDS_SHOWN` and `AUCTION_RECENTLY_CLOSED_DAYS` can now be set in `.env` like
+  every other business value; `config/settings.py` has a table of contents at the top.
+- `docs/HOW_TO_CHANGE.md`: new file-by-file map and step-by-step recipes (change email text,
+  add a setting, add a model field, add a bid rule, add a page).
+- Tests: 196 run, all pass (PostgreSQL).
+
 ## Current problems
 - None known.
 - PostgreSQL is a portable install and **must be started after every reboot** (`scripts\start_postgres.ps1`). The portable binaries are not code-signed (normal for EnterpriseDB's zip); they were downloaded over HTTPS from EnterpriseDB, the source postgresql.org links to.
@@ -186,6 +200,7 @@ See also: `README.md` (setup/run/demo) and `docs/HOW_TO_CHANGE.md` (which file t
 
 - Auction status stores only facts the clock can't provide. Upcoming / Live / Closing is computed (no job needed to flip states).
 - Business actions live in `services.py` / model methods. Views stay thin.
+- Email wording lives in templates, never in Python (`config/mail.py: build_email()`).
 
 - Bid rules live in one function (`place_bid`), and browser messages are built in one module (`realtime.py`), so the rules and the privacy guarantee are each in one place.
 - Synchronous consumer (runs in a thread), so it can use the ORM like a normal view.

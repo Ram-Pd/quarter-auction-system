@@ -11,23 +11,15 @@ commit then fails, a retry could send it twice. That window is tiny; true
 exactly-once delivery to an external mail server is not possible.)
 """
 from django.conf import settings
-from django.core.mail import EmailMessage
 from django.db import transaction
 from django.utils import timezone
 
+from config.mail import build_email
+
 from .models import Auction
 
-FOOTER = "\nThis is an automated message from a TRAINING PROJECT, not an official SAIL communication.\n"
-
-
-def _quarter_lines(auction):
-    q = auction.quarter
-    return (
-        f"  Quarter number : {q.quarter_no}\n"
-        f"  Sector/location: {q.sector}, {q.location_block}\n"
-        f"  Floor          : {q.floor}\n"
-        f"  Area           : {q.area_sqft:,.0f} sq ft\n"
-    )
+# The wording of each email is in auctions/templates/auctions/emails/:
+#   winner_subject.txt, winner_body.txt, loser_subject.txt, loser_body.txt
 
 
 def notify_winner(auction_id):
@@ -41,23 +33,9 @@ def notify_winner(auction_id):
 
         bid = auction.winning_bid
         applicant = bid.participation.applicant
-        body = (
-            f"Dear {applicant.name},\n\n"
-            f"Congratulations! Your bid was the highest in the {settings.AUCTION_TITLE}.\n\n"
-            f"{_quarter_lines(auction)}"
-            f"  Winning amount : Rs. {bid.amount:,.2f}\n"
-            f"  Your bidder code in this auction: {bid.participation.anonymous_code}\n\n"
-            "Next steps (placeholder, to be confirmed by the auction office):\n"
-            "  1. Wait for the formal allotment letter from the auction office.\n"
-            "  2. Complete the documentation and payment formalities within the time stated in that letter.\n"
-            "  3. Quote your application number in all correspondence: "
-            f"{applicant.application_no}\n"
-            + FOOTER
-        )
-        EmailMessage(
-            subject=f"You won the auction for quarter {auction.quarter.quarter_no}",
-            body=body, from_email=settings.DEFAULT_FROM_EMAIL, to=[applicant.email],
-        ).send()
+        build_email("auctions/emails/winner",
+                    {"applicant": applicant, "quarter": auction.quarter, "bid": bid},
+                    to=[applicant.email]).send()
 
         auction.winner_notified_at = timezone.now()
         auction.save(update_fields=["winner_notified_at", "updated_at"])
@@ -82,14 +60,8 @@ def notify_losers(auction_id):
                   auction.bids.exclude(participation_id=winner_participation_id)
                   .select_related("participation__applicant")}
         for applicant in losers:
-            EmailMessage(
-                subject=f"Auction result for quarter {auction.quarter.quarter_no}",
-                body=(f"Dear {applicant.name},\n\n"
-                      f"The auction for quarter {auction.quarter.quarter_no} has closed. "
-                      "Your bid was not the highest this time.\n\n"
-                      "Thank you for taking part. Other quarters may be auctioned later.\n" + FOOTER),
-                from_email=settings.DEFAULT_FROM_EMAIL, to=[applicant.email],
-            ).send()
+            build_email("auctions/emails/loser", {"applicant": applicant, "quarter": auction.quarter},
+                        to=[applicant.email]).send()
 
         auction.losers_notified_at = timezone.now()
         auction.save(update_fields=["losers_notified_at", "updated_at"])

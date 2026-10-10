@@ -1,0 +1,16 @@
+{% autoescape off %}Dear {{ applicant.name }},
+
+Congratulations! Your bid was the highest in the {{ AUCTION_TITLE }}.
+
+  Quarter number : {{ quarter.quarter_no }}
+  Sector/location: {{ quarter.sector }}, {{ quarter.location_block }}
+  Floor          : {{ quarter.floor }}
+  Area           : {{ quarter.area_sqft|floatformat:"0g" }} sq ft
+  Winning amount : Rs. {{ bid.amount|floatformat:"2g" }}
+  Your bidder code in this auction: {{ bid.participation.anonymous_code }}
+
+Next steps (placeholder, to be confirmed by the auction office):
+  1. Wait for the formal allotment letter from the auction office.
+  2. Complete the documentation and payment formalities within the time stated in that letter.
+  3. Quote your application number in all correspondence: {{ applicant.application_no }}
+{% include "emails/training_footer.txt" %}{% endautoescape %}

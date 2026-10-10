@@ -1,0 +1,18 @@
+{% autoescape off %}Dear {{ applicant.name }},
+
+Thank you for registering for the {{ AUCTION_TITLE }}.
+
+Application number: {{ applicant.application_no }}
+
+Two documents are attached:
+  1. Auction Application Form
+  2. Auction Intimation Slip - contains your URN and the EMD payment instructions
+
+Next steps:
+  - Pay the EMD through SBI Collect using the URN on the Intimation Slip.
+  - After the auction office verifies your payment, activate your account on the
+    auction website with your email address and URN.
+  - Log in and choose the quarter(s) you want to bid on.
+
+Keep your URN confidential.
+{% include "emails/training_footer.txt" %}{% endautoescape %}
