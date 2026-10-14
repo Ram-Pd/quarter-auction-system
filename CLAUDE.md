@@ -28,7 +28,7 @@ This is a proposed training system. Do not describe its workflow or business rul
 
 ## 4. Business workflow (Change Request #3)
 
-**1. Public website (no login)**: home page with the quarters on auction (quarter no., locality = sector + location/block, type, floor, area, base rate, EMD, bidding date/time slot), bidding rules and FAQ (one editable place: `templates/content/`), and a Login button. All wording is placeholder text, never official SAIL policy.
+**1. Public website (no login)**: home page with an introduction, bidding rules and FAQ (one editable place: `templates/content/`), and Login / Create account buttons. **No quarter information is public** (user decision 2026-10-14, overriding CR #3's placeholder): the quarter list and the auction pages need a login. All wording is placeholder text, never official SAIL policy.
 
 **2. Sign-up**: name, phone (collected, NOT verified), email; then a 6-digit email OTP (stored hashed, 10-minute expiry, 5 wrong attempts max, resend cooldown, rate limits per email and per IP, single use); then a password (Django hashing + validators). The user is logged in and lands on the quarter listing. Secure password reset by email.
 
@@ -40,7 +40,7 @@ This is a proposed training system. Do not describe its workflow or business rul
 
 **6. Admin uploads the quarter Excel**: each row creates a Quarter AND its Auction (SCHEDULED) atomically; the bidding window comes from the file (see section 9).
 
-**7. Bidding day**: each quarter has its own slot (default 5 minutes, editable per auction before it starts); several can run at once. Only eligible applicants get an anonymous per-auction code ("Bidder 7") and may bid; anyone may watch. Step = `increment_percent` x base rate (default 0.20 %), whole rupees. Quick bids +1/+2/+5 steps; custom amount >= highest + one step; first bid >= base rate. `transaction.atomic()` + `select_for_update()` on the Auction row; duplicates and out-of-window bids rejected; accepted bids stored and broadcast (code, amount, time, new highest, remaining time); reconnect resyncs. Anti-sniping: per-auction `anti_snipe_seconds`, 0 = off (default).
+**7. Bidding day**: each quarter has its own slot (default 5 minutes, editable per auction before it starts); several can run at once. Only eligible applicants get an anonymous per-auction code ("Bidder 7") and may bid; any logged-in user may watch. Step = `increment_percent` x base rate (default 0.20 %), whole rupees. Quick bids +1/+2/+5 steps; custom amount >= highest + one step; first bid >= base rate. `transaction.atomic()` + `select_for_update()` on the Auction row; duplicates and out-of-window bids rejected; accepted bids stored and broadcast (code, amount, time, new highest, remaining time); reconnect resyncs. Anti-sniping: per-auction `anti_snipe_seconds`, 0 = off (default).
 
 **8. Closing and results**: a background worker closes due auctions atomically and idempotently. Winner = highest valid bid (tie: earliest). If that bidder already holds `MAX_QUARTERS_PER_APPLICANT` (2) allotted quarters or is no longer eligible, the next-highest eligible bidder wins; if none: CLOSED_NO_VALID_WINNER. Outcomes: CLOSED_WON, CLOSED_NO_BIDS, CLOSED_NO_VALID_WINNER. The result (winning code, amount, total bids) is published on the same auction page. Winner email once (`winner_email_sent_at`); loser emails off by default.
 
@@ -143,7 +143,7 @@ From Change Request #3:
 13. Capped top bidder: next-highest or vacant? (placeholder: next-highest eligible bidder, at their own highest bid)
 14. Exact document checklist and official wording (rules, FAQ, declaration)? (placeholder: CR #3 list, editable)
 15. Phone verification by SMS later? (placeholder: not verified)
-16. Quarter information public before login? (placeholder: yes)
+16. Quarter information public before login? DECIDED by the user (2026-10-14): **no**, quarters, auction pages and live updates need a login.
 17. Deployment, database, retention, refunds? (placeholder: PostgreSQL; refunds out of scope)
 Also: paying MORE than the EMD is accepted as verified (assumption); "you cannot outbid yourself" kept from earlier milestones (assumption).
 

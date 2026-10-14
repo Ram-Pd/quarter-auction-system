@@ -2,7 +2,7 @@
 
 _Last updated: 2026-10-14, Change Request #3 implemented (all six CR #3 milestones)_
 
-**Test status:** 208 automated tests, all passing on PostgreSQL 17 (`python manage.py test`, about 1 minute).
+**Test status:** 211 automated tests, all passing on PostgreSQL 17 (`python manage.py test`, about 1 minute).
 **Before running anything:** start PostgreSQL with `.\scripts\start_postgres.ps1` (it does not auto-start).
 
 See also: `README.md` (setup/run/demo), `docs/HOW_TO_CHANGE.md` (which file to edit for what),
@@ -48,9 +48,11 @@ with quick bids; a 2-quarter allotment cap.
   (import, auctions, bids by code; no personal data). Participation stays superuser-only.
 
 ### Milestone 2: Public site, sign-up, login ✅
-- **Home page** (public): quarters with locality, type, floor, area, base rate, EMD, slot,
-  live countdown; recent results; rules and FAQ from `templates/content/` (one place,
-  placeholder wording, numbers from settings); Login button in the header.
+- **Home page** (public): introduction, rules and FAQ from `templates/content/` (one place,
+  placeholder wording, numbers from settings); Login / Create account buttons.
+  **Change 2026-10-14 (user):** the quarter list was removed from the home page; quarter
+  information, auction pages and live WebSocket updates now need a login (anonymous
+  sockets are refused with code 4401).
 - **Sign-up in 3 steps** (`accounts/views.py`, `accounts/otp.py`): details → 6-digit code →
   password. Nothing is saved in the User table until the last step. OTP: `secrets` random,
   stored as a keyed hash (`salted_hmac`), 10-minute expiry, 5 wrong attempts (counted under
@@ -100,9 +102,9 @@ with quick bids; a 2-quarter allotment cap.
   fewer than `MAX_QUARTERS_PER_APPLICANT` allotted. Used everywhere.
 
 ### Milestone 5: Bidding ✅
-- Auction page is **public** (watch live, see history and result); an eligible applicant
+- Auction page needs a **login** (any logged-in user may watch, see history and result); an eligible applicant
   automatically gets a "Bidder N" code on first visit and the bid panel; others see the reason.
-- WebSocket: anyone may connect read-only; bids only from an eligible participant's connection.
+- WebSocket: logged-in users may connect read-only; bids only from an eligible participant's connection.
 - **Step** = increment % × base rate, whole rupees; **quick bids** +1/+2/+5 steps (buttons show
   the amount and follow the live highest bid); custom amount ≥ highest + one step; first bid ≥
   base rate; whole rupees only; duplicate `client_bid_id` = same bid; can't outbid yourself.
@@ -163,8 +165,7 @@ The test run uses a fast password hasher (real hashing is ~0.5 s per user); prod
 URN system-generated · first bid ≥ base rate · any amount ≥ highest + one step · step rounded
 to nearest rupee (min Rs. 1) · unranked multi-select · add quarters until 24 h before the slot
 · capped top bidder → next-highest eligible at their own bid · paying more than the EMD is
-accepted · cannot outbid yourself · anti-sniping off · phone not verified · quarter info
-public · checklist items as in CR #3 · tie: earliest bid · loser emails off.
+accepted · cannot outbid yourself · anti-sniping off · phone not verified · checklist items as in CR #3 · tie: earliest bid · loser emails off.
 
 ## Next steps
 1. Ask the mentor the open questions (CLAUDE.md section 12), especially Aadhaar storage,

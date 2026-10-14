@@ -4,7 +4,7 @@
 {% block main_class %}wide{% endblock %}
 
 {% block content %}
-<p><a href="{% if user.is_authenticated %}{% url 'auctions:listing' %}{% else %}{% url 'home' %}{% endif %}">&larr; Back to the quarter list</a></p>
+<p><a href="{% url 'auctions:listing' %}">&larr; Back to the quarter list</a></p>
 
 <div class="room">
   {# ---------------- left: quarter details + live status ---------------- #}
@@ -103,7 +103,6 @@
         <h2>Watching</h2>
         <p class="muted">{{ not_eligible_reason|default:"You are viewing this auction." }}
           You can watch the bidding live, but you cannot bid.</p>
-        {% if not user.is_authenticated %}<a class="btn btn-small" href="{% url 'accounts:login' %}?next={{ request.path }}">Login</a>{% endif %}
       {% endif %}
     </div>
 

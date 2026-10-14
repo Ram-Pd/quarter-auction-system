@@ -32,9 +32,10 @@ If no SMTP password is set, emails appear in window 1 and as `.eml` files in `se
 
 ## 1. Public website (1 min)
 1. Open http://127.0.0.1:8000/ without logging in.
-2. *Point out:* the quarter table (locality, type, floor, area, base rate, **EMD**, bidding
-   slot, live countdown), the **rules** and **FAQ** (one editable place:
-   `templates/content/`), and the **Login** button in the corner.
+2. *Point out:* the **rules** and **FAQ** (one editable place: `templates/content/`) and the
+   **Login** button in the corner. **No quarter information** is shown to visitors: the
+   quarter list appears only after sign-up / login. Try http://127.0.0.1:8000/auctions/1/
+   directly: you are sent to the login page.
 
 ## 2. Admin: Excel import (2 min) - log in as `auctionadmin@example.com` at /admin/
 1. **Quarters → Import from Excel →** `sample_data\quarters_bad_header.xlsx`: header error, nothing imported.
@@ -80,8 +81,8 @@ If no SMTP password is set, emails appear in window 1 and as `.eml` files in `se
 2. Bidder 1 clicks **+1 step** (= base rate for the first bid). Bidder 2 sees it instantly.
 3. Bidder 2 types an amount below highest + one step: refused with the minimum.
    Then **+5 steps**: accepted. Bid step = 0.2 % of the base rate (Rs. 90 on 45,000).
-4. Open the same page in a private window **without logging in**: it can watch live but
-   has no bid panel.
+4. Log in as `demo5@example.com` (not registered for bidding) in a private window and open
+   the same auction: it can watch live but has no bid panel, and says why.
 5. Stop and restart the server (window 1): pages show "Reconnecting…", then resync.
 6. Admin (superuser) → Bids: amounts by code only. **Participations** (who is behind
    each code) is visible to superusers only.
@@ -89,7 +90,7 @@ If no SMTP password is set, emails appear in window 1 and as `.eml` files in `se
 ## 7. Closing and results (3 min)
 1. Wait for L-301 to end, or in admin set an auction's time so it ends now. The worker
    closes it within ~5 s (or the open page triggers closure at 00:00).
-2. Winner's page: "Congratulations, you won!"; others and the public see
+2. Winner's page: "Congratulations, you won!"; other logged-in users see
    "Won by Bidder N with Rs. ..., Total bids: N". Winner email in window 1 (once only).
 3. *Explain the 2-quarter cap:* if the top bidder already holds 2 quarters, the
    next-highest eligible bidder wins; if nobody qualifies: "No valid winner", quarter stays
@@ -98,7 +99,7 @@ If no SMTP password is set, emails appear in window 1 and as `.eml` files in `se
 
 ## 8. Tests (1 min)
 ```powershell
-python manage.py test        # 208 tests
+python manage.py test        # 211 tests
 ```
 
 ---

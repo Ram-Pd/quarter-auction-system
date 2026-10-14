@@ -280,8 +280,10 @@ class ResultDisplayTests(TestCase):
         self.assertContains(response, "Congratulations, you won!")
         self.assertContains(response, "47,000")
 
-    def test_public_page_shows_code_amount_and_total_bids_only(self):
-        response = self.client.get(self.url)   # not logged in: public
+    def test_other_users_see_code_amount_and_total_bids_only(self):
+        from accounts.tests.factories import make_user
+        self.client.force_login(make_user(50))   # any logged-in user, not a bidder here
+        response = self.client.get(self.url)
         self.assertContains(response, "Won by <strong>Bidder 1</strong>")
         self.assertContains(response, "Total bids: 2")
         body = response.content.decode()

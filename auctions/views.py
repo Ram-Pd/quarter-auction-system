@@ -1,11 +1,13 @@
 """
 Pages about quarters and auctions.
 
-    home          /                    public: quarters on auction, rules, FAQ
+    home          /                    public: introduction, rules, FAQ (NO quarter data)
     listing       /auctions/           logged in: every quarter with EMD and slot,
                                        your registration status and eligibility
-    auction_room  /auctions/<id>/      public page of one auction; eligible bidders
-                                       also get the bid panel; result shown here
+    auction_room  /auctions/<id>/      logged in: one auction (watch live); eligible
+                                       bidders also get the bid panel; result shown here
+
+Quarter information is shown only to logged-in users (decision 2026-10-14).
 
 PRIVACY: these pages show quarter and price data, anonymous bidder codes and
 the user's OWN status only. Never another person's identity.
@@ -41,15 +43,8 @@ def _recently_closed(now):
 
 
 def home(request):
-    """Public home page: quarters being auctioned (public data only), rules and FAQ."""
-    now = timezone.now()
-    auctions = _with_phase(Auction.objects.filter(status=Auction.Status.SCHEDULED)
-                           .select_related("quarter").order_by("start_time"), now)
-    return render(request, "home.html", {
-        "auctions": auctions,
-        "recently_closed": _recently_closed(now),
-        "server_now": now,
-    })
+    """Public home page: introduction, rules and FAQ. Quarters are listed only after login."""
+    return render(request, "home.html")
 
 
 @login_required
@@ -82,9 +77,10 @@ def listing(request):
     })
 
 
+@login_required
 def auction_room(request, auction_id):
     """
-    One auction's page. Anyone may view it (live highest bid, history by code,
+    One auction's page. Any logged-in user may view it (live highest bid, history by code,
     and the result once closed). Only an ELIGIBLE applicant gets a "Bidder N"
     code (created here on the first visit) and the bid panel.
     """

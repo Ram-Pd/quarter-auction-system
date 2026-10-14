@@ -3,7 +3,7 @@
 A Django web application for auctioning vacant residential quarters, following the
 mentor's final workflow (Change Request #3):
 
-public home page with rules and FAQ → sign-up with an email code (OTP) → login →
+public home page with rules and FAQ (quarters are shown only after login) → sign-up with an email code (OTP) → login →
 **Register for bidding** (any number of quarters, Aadhaar/PAN stored encrypted) →
 Application Form + Intimation Slip emailed (URN, EMD per quarter) → EMD paid offline
 through SBI Collect → **Verification Officer** checks documents and each EMD receipt →
@@ -60,7 +60,7 @@ Two terminals, no venv activation needed:
 .\scripts\run_server.ps1     # terminal 1: starts PostgreSQL + the website (HTTP and WebSockets)
 .\scripts\run_worker.ps1     # terminal 2: background worker (closes finished auctions, sends winner emails)
 ```
-- Site: http://127.0.0.1:8000/ (public home page)
+- Site: http://127.0.0.1:8000/ (public home page: rules and FAQ; quarters after login)
 - Admin: http://127.0.0.1:8000/admin/
 
 > **`ModuleNotFoundError: No module named 'environ'`** means the computer-wide Python ran
@@ -95,7 +95,7 @@ and one private window) and open the same live auction.
 ## Tests
 
 ```powershell
-python manage.py test        # 208 tests, about 1 minute, needs PostgreSQL running
+python manage.py test        # 211 tests, about 1 minute, needs PostgreSQL running
 ```
 
 ## Project layout

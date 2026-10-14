@@ -55,8 +55,13 @@ class ConsumerTests(TransactionTestCase):
         self.assertEqual(await sync_to_async(Bid.objects.count)(), 0)
         await communicator.disconnect()
 
-    async def test_anonymous_visitor_can_watch_but_not_bid(self):
-        await self.assert_watch_only(AnonymousUser())
+    async def test_anonymous_visitor_rejected(self):
+        connected, code = await tab(AnonymousUser(), self.auction).connect()
+        self.assertEqual((connected, code), (False, 4401))
+
+    async def test_logged_in_user_without_registration_can_watch_but_not_bid(self):
+        from accounts.tests.factories import make_user
+        await self.assert_watch_only(await sync_to_async(make_user)(60))
 
     async def test_applicant_not_eligible_for_this_quarter_can_only_watch(self):
         # Applied for this quarter, but not verified/active: no bidding right.

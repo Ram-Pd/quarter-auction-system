@@ -58,7 +58,7 @@ flowchart LR
 | **accounts/** | Custom `User` (email login), sign-up with email OTP (`otp.py`), login, password reset. |
 | **applications/** | "Register for bidding", Aadhaar/PAN encryption, URN, PDFs, offline verification, roles, audit log, and `eligibility.py`. |
 | **eligibility.py** | The single rule "may this applicant bid on this quarter?" used by the pages, the WebSocket, bidding and closure. |
-| **AuctionConsumer** | One per open auction tab. Anyone may watch; only an eligible participant's connection may bid. |
+| **AuctionConsumer** | One per open auction tab. Logged-in users may watch (others are refused with 4401); only an eligible participant's connection may bid. |
 | **bidding.py** | *All* bid rules, run inside a transaction holding a row lock on the auction. |
 | **closing.py** | Closes finished auctions exactly once, applies the 2-quarter cap, picks the winner. |
 | **realtime.py** | Builds every message sent to browsers: anonymous codes, amounts and times only. |
@@ -201,7 +201,7 @@ through the audited "reveal" action.
 ```mermaid
 flowchart TD
     X[Auction Admin uploads Excel] --> Y[Each row: Quarter + Auction SCHEDULED<br/>slot from the file]
-    H[Public home page: quarters, rules, FAQ] --> S1[Sign-up: name, phone, email]
+    H[Public home page: rules, FAQ<br/>no quarter data] --> S1[Sign-up: name, phone, email]
     S1 --> S2[6-digit email code<br/>hashed, 10 min, 5 attempts]
     S2 --> S3[Choose password -> logged in]
     S3 --> L[Quarter listing + my status]

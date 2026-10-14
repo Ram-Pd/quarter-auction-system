@@ -5,7 +5,7 @@
  * - Draws every update the server sends (snapshot, bid_accepted, state).
  * - Sends bids as {"type": "bid", "amount": "...", "client_bid_id": "<uuid>"}, from the
  *   typed amount or from a quick-bid button (+1 / +2 / +5 steps over the highest bid).
- * - Anyone may watch; only an eligible bidder's page has the bid panel.
+ * - Any logged-in user may watch; only an eligible bidder's page has the bid panel.
  * - Reconnects automatically after a network drop (1s, 2s, 4s ... max 15s) and
  *   resyncs; the server sends a fresh snapshot on every connect.
  * - Asks for a resync when the tab becomes visible again (laptop woke up, etc.).
@@ -21,7 +21,7 @@
   var state = JSON.parse(document.getElementById("initial-state").textContent);
 
   // Close codes from auctions/consumers.py: these mean "don't retry".
-  var FATAL_CLOSE = { 4404: "Auction not found." };
+  var FATAL_CLOSE = { 4401: "Please log in again.", 4404: "Auction not found." };
 
   var el = function (id) { return document.getElementById(id); };
   var ui = {

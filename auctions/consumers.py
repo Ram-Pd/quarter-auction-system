@@ -14,7 +14,7 @@ Messages TO the browser (JSON), all built in auctions/realtime.py:
                                           -> only to the tab that sent the bid
 
 Who may connect (checked per auction, on every connection):
-    - anyone may WATCH (the auction page is public; messages hold no personal data)
+    - only LOGGED-IN users may connect (else closed with 4401); they may watch
     - only an ELIGIBLE applicant with a code in THIS auction may BID
       (applications/eligibility.py); place_bid() checks eligibility again for every bid
 
@@ -38,7 +38,8 @@ from .models import Auction, Participation
 
 logger = logging.getLogger(__name__)
 
-# WebSocket close code (4000-4999 are free for applications to use).
+# WebSocket close codes (4000-4999 are free for applications to use).
+CLOSE_NOT_LOGGED_IN = 4401
 CLOSE_NOT_FOUND = 4404
 
 
@@ -52,6 +53,11 @@ class AuctionConsumer(JsonWebsocketConsumer):
         self.participation = None
         self.last_bid_at = 0.0
 
+        user = self.scope.get("user")
+        if user is None or not user.is_authenticated:
+            self.close(code=CLOSE_NOT_LOGGED_IN)
+            return
+
         auction = Auction.objects.select_related("quarter").filter(pk=self.auction_id).first()
         if auction is None:
             self.close(code=CLOSE_NOT_FOUND)
@@ -59,7 +65,7 @@ class AuctionConsumer(JsonWebsocketConsumer):
 
         # AUTHORISATION, per auction: this connection may BID only if the user is
         # eligible for THIS quarter and has a code in THIS auction. Everyone else watches.
-        applicant = Applicant.for_user(self.scope.get("user"))
+        applicant = Applicant.for_user(user)
         if applicant and eligibility.check(applicant, auction.quarter).allowed:
             self.participation = Participation.objects.filter(auction=auction, applicant=applicant).first()
 

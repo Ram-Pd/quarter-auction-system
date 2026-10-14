@@ -15,12 +15,14 @@ class HomePageTests(TestCase):
         self.live = make_auction(make_quarter("B-214"))
         self.upcoming = make_auction(make_quarter("C-305", emd_amount=7500), starts_in=timedelta(days=2))
 
-    def test_public_quarter_list_rules_and_faq(self):
+    def test_public_page_has_rules_and_faq_but_no_quarters(self):
         response = self.client.get(reverse("home"))
         self.assertEqual(response.status_code, 200)
-        for text in ["B-214", "C-305", "Sector 4, Near market", "45,000", "7,500", "Live", "Upcoming",
-                     "Bidding rules", "Frequently asked questions", "allotted at most 2"]:
+        for text in ["Bidding rules", "Frequently asked questions", "allotted at most 2"]:
             self.assertContains(response, text)
+        # Quarter information is only for logged-in users (decision 2026-10-14).
+        for hidden in ["B-214", "C-305", "Near market", "7,500", "Bidding slot"]:
+            self.assertNotContains(response, hidden)
         self.assertContains(response, reverse("accounts:login"))      # Login button in the corner
         self.assertContains(response, reverse("accounts:signup"))
         self.assertContains(response, "not official SAIL policy")    # placeholder wording is labelled
@@ -30,6 +32,10 @@ class HomePageTests(TestCase):
         response = self.client.get(reverse("home"))
         self.assertContains(response, "allotted at most 3")
         self.assertContains(response, "usually 7 minutes")
+
+    def test_logged_in_user_gets_link_to_quarter_list(self):
+        self.client.force_login(make_user())
+        self.assertContains(self.client.get(reverse("home")), reverse("auctions:listing"))
 
     def test_no_bidder_identity_on_public_page(self):
         applicant, _, _ = make_bidder(self.live, 1)
@@ -75,11 +81,14 @@ class AuctionPageTests(TestCase):
         self.auction = make_auction()
         self.url = reverse("auctions:auction_room", args=[self.auction.pk])
 
-    def test_public_can_view_but_not_bid(self):
+    def test_anonymous_visitor_is_sent_to_login(self):
+        self.assertRedirects(self.client.get(self.url), f"{reverse('accounts:login')}?next={self.url}")
+
+    def test_logged_in_user_without_registration_can_watch_but_not_bid(self):
+        self.client.force_login(make_user())
         response = self.client.get(self.url)
-        self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Watching")
-        self.assertContains(response, "Log in to bid.")
+        self.assertContains(response, "Register for bidding")
         self.assertNotContains(response, 'id="bid-form"')
 
     def test_eligible_applicant_gets_a_code_and_quick_bids(self):
@@ -113,4 +122,5 @@ class AuctionPageTests(TestCase):
         self.assertNotContains(response, 'id="bid-form"')
 
     def test_unknown_auction_404(self):
+        self.client.force_login(make_user())
         self.assertEqual(self.client.get(reverse("auctions:auction_room", args=[99999])).status_code, 404)
