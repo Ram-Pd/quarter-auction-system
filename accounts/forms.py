@@ -3,135 +3,104 @@ import re
 from django import forms
 from django.contrib.auth import password_validation
 from django.contrib.auth.forms import AuthenticationForm
-from django.contrib.auth.models import User
 
 from . import ratelimit
-from .models import Applicant
+from .models import User, normalise_email, phone_validator
 
 
-class RegistrationForm(forms.ModelForm):
-    # Wider than the DB columns so "+91 98765 43210" / "827 001" reach the clean_*
-    # methods; the model's 10-digit / 6-digit validators run afterwards.
-    mobile = forms.CharField(
-        max_length=20,
-        widget=forms.TextInput(attrs={"inputmode": "numeric", "placeholder": "10-digit mobile"}),
-    )
-    pin_code = forms.CharField(label="PIN code", max_length=10,
-                               widget=forms.TextInput(attrs={"inputmode": "numeric"}))
-    declaration = forms.BooleanField(
-        required=True,
-        label="I declare that the information given above is true and correct.",
-        error_messages={"required": "You must accept the declaration to register."},
-    )
+def clean_indian_mobile(value):
+    """Accept "+91 98765-43210", "098765 43210", etc. -> "9876543210"."""
+    digits = re.sub(r"[\s\-()]", "", value or "")
+    if digits.startswith("+91"):
+        digits = digits[3:]
+    elif len(digits) == 11 and digits.startswith("0"):
+        digits = digits[1:]
+    phone_validator(digits)
+    return digits
 
-    class Meta:
-        model = Applicant
-        fields = ["name", "father_name", "mobile", "email", "address", "state", "pin_code"]
-        widgets = {"address": forms.Textarea(attrs={"rows": 3})}
-        error_messages = {
-            # Shown instead of Django's default "Applicant with this Email already exists."
-            "email": {"unique": "This email address is already registered. If you have lost "
-                                "your documents, please contact the auction office."},
-        }
 
-    def clean_name(self):
-        return " ".join(self.cleaned_data["name"].split())
+class SignupForm(forms.Form):
+    """Step 1 of sign-up: name, phone, email. The phone is collected, not verified."""
 
-    def clean_father_name(self):
-        return " ".join(self.cleaned_data["father_name"].split())
+    full_name = forms.CharField(label="Name", max_length=150)
+    # Wider than 10 so "+91 98765 43210" reaches clean_phone().
+    phone = forms.CharField(label="Phone number", max_length=20,
+                            widget=forms.TextInput(attrs={"inputmode": "numeric", "placeholder": "10-digit mobile"}),
+                            help_text="Collected for contact only. It is not verified.")
+    email = forms.EmailField(help_text="We will email a 6-digit code to confirm this address.")
 
-    def clean_mobile(self):
-        # Accept "+91 98765-43210", "098765 43210", etc. -> "9876543210"
-        digits = re.sub(r"[\s\-()]", "", self.cleaned_data["mobile"])
-        if digits.startswith("+91"):
-            digits = digits[3:]
-        elif len(digits) == 11 and digits.startswith("0"):
-            digits = digits[1:]
-        return digits
+    def clean_full_name(self):
+        return " ".join(self.cleaned_data["full_name"].split())
+
+    def clean_phone(self):
+        return clean_indian_mobile(self.cleaned_data["phone"])
 
     def clean_email(self):
-        return self.cleaned_data["email"].strip().lower()
+        email = normalise_email(self.cleaned_data["email"])
+        if User.objects.filter(email=email).exists():
+            raise forms.ValidationError("An account with this email already exists. Please log in, "
+                                        "or use 'Forgot password'.")
+        return email
 
-    def clean_pin_code(self):
-        return self.cleaned_data["pin_code"].replace(" ", "")
+
+class OtpForm(forms.Form):
+    """Step 2 of sign-up: the code from the email."""
+
+    code = forms.CharField(label="6-digit code", min_length=6, max_length=6,
+                           widget=forms.TextInput(attrs={"inputmode": "numeric", "autocomplete": "one-time-code",
+                                                         "autofocus": True}))
+
+    def clean_code(self):
+        code = self.cleaned_data["code"].strip()
+        if not code.isdigit():
+            raise forms.ValidationError("The code has digits only.")
+        return code
 
 
-class ActivationForm(forms.Form):
-    """
-    Email + URN (both needed: the URN arrives only by email) + new password.
-    On success `self.applicant` holds the matching applicant.
-    """
+class ChoosePasswordForm(forms.Form):
+    """Step 3 of sign-up: choose a password (Django's password rules apply)."""
 
-    email = forms.EmailField()
-    urn = forms.CharField(label="URN", max_length=7, min_length=7,
-                          widget=forms.TextInput(attrs={"inputmode": "numeric", "autocomplete": "off"}),
-                          help_text="The 7-digit number on your Intimation Slip.")
-    password1 = forms.CharField(label="New password", strip=False,
+    password1 = forms.CharField(label="Password", strip=False,
                                 widget=forms.PasswordInput(attrs={"autocomplete": "new-password"}),
                                 help_text=password_validation.password_validators_help_text_html())
     password2 = forms.CharField(label="Confirm password", strip=False,
                                 widget=forms.PasswordInput(attrs={"autocomplete": "new-password"}))
 
-    def __init__(self, *args, request=None, **kwargs):
-        self.request = request
-        self.applicant = None
+    def __init__(self, *args, email="", full_name="", **kwargs):
+        self.email = email
+        self.full_name = full_name
         super().__init__(*args, **kwargs)
 
     def clean(self):
         cleaned = super().clean()
-        email = (cleaned.get("email") or "").strip().lower()
-        urn = (cleaned.get("urn") or "").strip()
-        if not email or not urn:
-            return cleaned  # field errors already shown
-
-        keys = ratelimit.attempt_keys("activate", self.request, email)
-        if ratelimit.is_blocked(keys):
-            raise forms.ValidationError(ratelimit.blocked_message(), code="rate_limited")
-
-        applicant = Applicant.objects.filter(email=email, urn=urn).first()
-        if applicant is None:
-            ratelimit.record_failure(keys)
-            # Same message whichever one is wrong: don't help a guesser.
-            raise forms.ValidationError("The email address and URN do not match our records.")
-        ratelimit.reset_identifier(keys)
-
-        # Email + URN are correct, so it is safe to say exactly what is wrong.
-        if applicant.is_activated:
-            raise forms.ValidationError("This account is already activated. Please log in, "
-                                        "or use 'Forgot password' if you need a new password.")
-        if not applicant.is_verified:
-            raise forms.ValidationError("Your EMD payment has not been verified yet. Please try "
-                                        "again after the auction office confirms your payment.")
-
         password1, password2 = cleaned.get("password1"), cleaned.get("password2")
         if password1 and password2:
             if password1 != password2:
                 self.add_error("password2", "The two passwords do not match.")
             else:
                 try:
-                    # Checked against a not-yet-saved user so "too similar to
-                    # username/email" rules work.
-                    password_validation.validate_password(
-                        password1, User(username=applicant.urn, email=applicant.email))
+                    # Checked against a not-yet-saved user so "too similar to your email/name" works.
+                    password_validation.validate_password(password1, User(email=self.email,
+                                                                          full_name=self.full_name))
                 except forms.ValidationError as error:
                     self.add_error("password1", error)
-
-        self.applicant = applicant
         return cleaned
 
 
-class UrnLoginForm(AuthenticationForm):
-    """Django's login form, with the username labelled "URN" and rate limiting."""
+class EmailLoginForm(AuthenticationForm):
+    """Django's login form (field "username" is the email here), with rate limiting."""
 
     def __init__(self, request=None, *args, **kwargs):
         super().__init__(request, *args, **kwargs)
-        self.fields["username"].label = "URN"
-        self.fields["username"].widget.attrs.update({"inputmode": "numeric", "autofocus": True})
-        self.error_messages["invalid_login"] = "Incorrect URN or password."
+        self.fields["username"].widget.attrs.update({"autofocus": True, "autocomplete": "email"})
+        self.error_messages["invalid_login"] = "Incorrect email or password."
+
+    def clean_username(self):
+        return normalise_email(self.cleaned_data["username"])
 
     def clean(self):
-        username = self.cleaned_data.get("username") or ""
-        keys = ratelimit.attempt_keys("login", self.request, username)
+        email = self.cleaned_data.get("username") or ""
+        keys = ratelimit.attempt_keys("login", self.request, email)
         if ratelimit.is_blocked(keys):
             raise forms.ValidationError(ratelimit.blocked_message(), code="rate_limited")
         try:

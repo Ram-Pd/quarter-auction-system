@@ -15,6 +15,7 @@ the .env file (see .env.example). docs/HOW_TO_CHANGE.md lists every one.
 Django reference: https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
+import sys
 from decimal import Decimal
 from pathlib import Path
 
@@ -74,9 +75,13 @@ INSTALLED_APPS = [
     'django.contrib.humanize',  # number formatting in templates (1,234)
     'channels',                 # WebSockets
     # Project apps
-    'accounts',
-    'auctions',
+    'accounts',       # login accounts: email + password, sign-up OTP
+    'applications',   # "Register for bidding", Aadhaar/PAN, URN, PDFs, offline verification
+    'auctions',       # quarters, auctions, live bidding, closure
 ]
+
+# Our own user model (accounts/models.py): logs in with EMAIL instead of a username.
+AUTH_USER_MODEL = 'accounts.User'
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
@@ -136,6 +141,7 @@ LOGGING = {
     'handlers': {'console': {'class': 'logging.StreamHandler', 'formatter': 'plain'}},
     'loggers': {
         'accounts': {'handlers': ['console'], 'level': 'INFO'},
+        'applications': {'handlers': ['console'], 'level': 'INFO'},
         'auctions': {'handlers': ['console'], 'level': 'INFO'},
     },
 }
@@ -156,7 +162,9 @@ DATABASES = {
 
 AUTH_PASSWORD_VALIDATORS = [
     {
+        # "Too similar to your email / name". Our User has full_name, not first/last name.
         'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
+        'OPTIONS': {'user_attributes': ('email', 'full_name')},
     },
     {
         'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator',
@@ -168,6 +176,13 @@ AUTH_PASSWORD_VALIDATORS = [
         'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator',
     },
 ]
+
+
+# Automated tests only ("manage.py test"): a fast password hasher. Real hashing
+# is deliberately slow (~0.5 s per password), which would make the test suite,
+# which creates hundreds of users, take many minutes. Never used outside tests.
+if len(sys.argv) > 1 and sys.argv[1] == 'test':
+    PASSWORD_HASHERS = ['django.contrib.auth.hashers.MD5PasswordHasher']
 
 
 # Internationalization
@@ -216,7 +231,7 @@ DEFAULT_FROM_EMAIL = env('DEFAULT_FROM_EMAIL', default='auction-demo@localhost')
 
 # Login / logout
 LOGIN_URL = 'accounts:login'
-LOGIN_REDIRECT_URL = 'auctions:lobby'
+LOGIN_REDIRECT_URL = 'auctions:listing'
 LOGOUT_REDIRECT_URL = 'home'
 PASSWORD_RESET_TIMEOUT = 60 * 60  # reset links expire after 1 hour (seconds)
 
@@ -226,34 +241,64 @@ PASSWORD_RESET_TIMEOUT = 60 * 60  # reset links expire after 1 hour (seconds)
 # Each can be overridden in .env without touching code.
 # =============================================================================
 
-# Auction placeholders: NOT official SAIL values (CLAUDE.md open question 2).
+# Placeholders: NOT official SAIL values (see CLAUDE.md open questions).
 AUCTION_TITLE = env('AUCTION_TITLE', default='Vacant Quarter Auction (Training Demo)')
 AUCTION_REFERENCE = env('AUCTION_REFERENCE', default='DEMO/QA/2026/01')
-EMD_AMOUNT = Decimal(env('EMD_AMOUNT', default='10000'))
+# Shown on the Intimation Slip's SBI Collect instructions (placeholder text).
+SBI_COLLECT_PAYEE = env('SBI_COLLECT_PAYEE', default='SAIL Bokaro Steel Plant - Quarter Auction EMD (DEMO)')
 
-# Brute-force protection for activation and login (accounts/ratelimit.py).
+# Aadhaar / PAN encryption (applications/crypto.py). Secrets: .env only.
+# FIELD_ENCRYPTION_KEYS: comma-separated Fernet keys, newest FIRST (rotation).
+# IDENTITY_HASH_KEY: secret for the keyed hash that enforces "one application per Aadhaar/PAN".
+# Generate both with:  python manage.py generate_secret_keys
+FIELD_ENCRYPTION_KEYS = env.list('FIELD_ENCRYPTION_KEYS', default=[])
+IDENTITY_HASH_KEY = env('IDENTITY_HASH_KEY', default='')
+
+# Sign-up email OTP (accounts/otp.py).
+OTP_LENGTH = 6
+OTP_VALID_MINUTES = env.int('OTP_VALID_MINUTES', default=10)
+OTP_MAX_ATTEMPTS = env.int('OTP_MAX_ATTEMPTS', default=5)            # wrong guesses per code
+OTP_RESEND_COOLDOWN_SECONDS = env.int('OTP_RESEND_COOLDOWN_SECONDS', default=60)
+OTP_SENDS_PER_EMAIL_PER_HOUR = env.int('OTP_SENDS_PER_EMAIL_PER_HOUR', default=5)
+OTP_SENDS_PER_IP_PER_HOUR = env.int('OTP_SENDS_PER_IP_PER_HOUR', default=20)
+# After the code is confirmed, the "choose a password" step must be finished within this time.
+SIGNUP_VERIFIED_WINDOW_MINUTES = env.int('SIGNUP_VERIFIED_WINDOW_MINUTES', default=30)
+
+# Brute-force protection for login (accounts/ratelimit.py).
 # After this many failures within the window, further attempts are refused
 # until the window has passed.
-AUTH_RATE_LIMIT_ATTEMPTS = env.int('AUTH_RATE_LIMIT_ATTEMPTS', default=5)        # per email/URN
+AUTH_RATE_LIMIT_ATTEMPTS = env.int('AUTH_RATE_LIMIT_ATTEMPTS', default=5)        # per email
 AUTH_RATE_LIMIT_IP_ATTEMPTS = env.int('AUTH_RATE_LIMIT_IP_ATTEMPTS', default=50)  # per IP address
 AUTH_RATE_LIMIT_WINDOW_SECONDS = env.int('AUTH_RATE_LIMIT_WINDOW_SECONDS', default=15 * 60)
 
+# Register for bidding (applications/).
+# An applicant may APPLY for any number of quarters but WIN at most this many.
+MAX_QUARTERS_PER_APPLICANT = env.int('MAX_QUARTERS_PER_APPLICANT', default=2)
+# A quarter can be selected (or added later) until this many hours before its
+# auction starts, leaving time for offline EMD verification. Placeholder
+# (CR #3 open question 4).
+APPLICATION_CLOSES_HOURS_BEFORE_AUCTION = env.int('APPLICATION_CLOSES_HOURS_BEFORE_AUCTION', default=24)
+
+# Auctions created by the Excel import (auctions/importers.py).
+# Used when the "Duration (min)" cell is blank. Editable per auction in the admin.
+DEFAULT_AUCTION_DURATION_MINUTES = env.int('DEFAULT_AUCTION_DURATION_MINUTES', default=5)
+# Bid step = this percentage of the base rate (0.20 means 0.2 %). Editable per auction.
+DEFAULT_INCREMENT_PERCENT = Decimal(env('DEFAULT_INCREMENT_PERCENT', default='0.20'))
+
 # Bidding (auctions/bidding.py). Placeholders: NOT official SAIL rules.
-# A bid placed when less than this many seconds remain extends the deadline
-# by the auction's own anti_snipe_extension (CLAUDE.md: "the final minute").
-AUCTION_ANTI_SNIPE_WINDOW_SECONDS = env.int('AUCTION_ANTI_SNIPE_WINDOW_SECONDS', default=60)
+QUICK_BID_STEPS = (1, 2, 5)  # the "+1 / +2 / +5 steps" buttons
+# Anti-sniping is per auction (Auction.anti_snipe_seconds, 0 = off). When on, a
+# deadline can be extended at most this many times, so an auction always ends.
+AUCTION_MAX_EXTENSIONS = env.int('AUCTION_MAX_EXTENSIONS', default=5)
 # Minimum gap between two bids from the same browser connection (anti-flooding).
 AUCTION_BID_MIN_INTERVAL_SECONDS = env.float('AUCTION_BID_MIN_INTERVAL_SECONDS', default=1.0)
-# An applicant may bid on only ONE quarter at a time: while they have bids in an
-# auction that is still open, bids in other auctions are refused (confirmed rule).
-AUCTION_ONE_QUARTER_AT_A_TIME = env.bool('AUCTION_ONE_QUARTER_AT_A_TIME', default=True)
 # How many recent bids the auction page shows.
 AUCTION_RECENT_BIDS_SHOWN = env.int('AUCTION_RECENT_BIDS_SHOWN', default=20)
 
 # Closure (auctions/closing.py) and notifications (auctions/emails.py).
 # How often "python manage.py run_auction_worker" checks for finished auctions.
 AUCTION_WORKER_INTERVAL_SECONDS = env.int('AUCTION_WORKER_INTERVAL_SECONDS', default=5)
-# Email the bidders who did not win (CLAUDE.md open question 9: off by default).
+# Email the bidders who did not win (off by default).
 AUCTION_NOTIFY_LOSERS = env.bool('AUCTION_NOTIFY_LOSERS', default=False)
-# How long closed auctions stay in the lobby's "Recently closed" list.
+# How long closed auctions stay in the "Recently closed" list.
 AUCTION_RECENTLY_CLOSED_DAYS = env.int('AUCTION_RECENTLY_CLOSED_DAYS', default=7)

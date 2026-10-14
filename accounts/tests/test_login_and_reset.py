@@ -6,31 +6,36 @@ from django.core.cache import cache
 from django.test import TestCase, override_settings
 from django.urls import reverse
 
-from accounts.tests.factories import STRONG_PASSWORD, make_activated_applicant
+from accounts.tests.factories import STRONG_PASSWORD, make_user
 
 
 class LoginLogoutTests(TestCase):
     def setUp(self):
         cache.clear()
-        self.applicant, self.user = make_activated_applicant()
+        self.user = make_user()
 
     def login(self, username=None, password=STRONG_PASSWORD):
         return self.client.post(reverse("accounts:login"),
-                                {"username": username or self.applicant.urn, "password": password},
+                                {"username": username or self.user.email, "password": password},
                                 follow=True)
 
-    def test_login_with_urn_goes_to_lobby(self):
+    def test_login_with_email_goes_to_listing(self):
         response = self.login()
-        self.assertRedirects(response, reverse("auctions:lobby"))
+        self.assertRedirects(response, reverse("auctions:listing"))
         self.assertTrue(get_user(self.client).is_authenticated)
 
-    def test_login_page_labels_username_as_urn(self):
-        self.assertContains(self.client.get(reverse("accounts:login")),
-                            '<label for="id_username">URN:</label>', html=True)
+    def test_email_is_not_case_sensitive(self):
+        self.login(username="  USER1@Example.com ")
+        self.assertTrue(get_user(self.client).is_authenticated)
+
+    def test_login_page_asks_for_email_and_offers_signup(self):
+        response = self.client.get(reverse("accounts:login"))
+        self.assertContains(response, '<label for="id_username">Email address:</label>', html=True)
+        self.assertContains(response, reverse("accounts:signup"))
 
     def test_wrong_password(self):
         response = self.login(password="wrong-password")
-        self.assertContains(response, "Incorrect URN or password.")
+        self.assertContains(response, "Incorrect email or password.")
         self.assertFalse(get_user(self.client).is_authenticated)
 
     @override_settings(AUTH_RATE_LIMIT_ATTEMPTS=3)
@@ -44,7 +49,7 @@ class LoginLogoutTests(TestCase):
     @override_settings(AUTH_RATE_LIMIT_ATTEMPTS=100, AUTH_RATE_LIMIT_IP_ATTEMPTS=4)
     def test_many_accounts_from_one_ip_is_rate_limited(self):
         for n in range(4):
-            self.login(username=f"999999{n}", password="x")
+            self.login(username=f"nobody{n}@example.com", password="x")
         self.assertContains(self.login(), "Too many failed attempts")
 
     def test_logout_requires_post_and_works(self):
@@ -59,22 +64,22 @@ class LoginLogoutTests(TestCase):
         self.client.force_login(self.user)
         response = self.client.get(reverse("home"))
         self.assertContains(response, "Log out")
-        self.assertContains(response, self.applicant.urn)
+        self.assertContains(response, self.user.full_name)
 
 
 class PasswordResetTests(TestCase):
     def setUp(self):
         cache.clear()
-        self.applicant, self.user = make_activated_applicant()
+        self.user = make_user()
 
     def request_reset(self, email):
         return self.client.post(reverse("accounts:password_reset"), {"email": email}, follow=True)
 
     def test_full_reset_flow(self):
-        response = self.request_reset(self.applicant.email.upper())
+        response = self.request_reset(self.user.email.upper())
         self.assertRedirects(response, reverse("accounts:password_reset_done"))
         self.assertEqual(len(mail.outbox), 1)
-        self.assertEqual(mail.outbox[0].to, [self.applicant.email])
+        self.assertEqual(mail.outbox[0].to, [self.user.email])
         self.assertIn("expires in 1 hour", mail.outbox[0].body)
 
         link = re.search(r"http://testserver(/password-reset/\S+/\S+/)", mail.outbox[0].body).group(1)
@@ -98,7 +103,7 @@ class PasswordResetTests(TestCase):
         self.assertEqual(len(mail.outbox), 0)
 
     def test_tampered_token_rejected(self):
-        self.request_reset(self.applicant.email)
+        self.request_reset(self.user.email)
         link = re.search(r"http://testserver(/password-reset/\S+/)\S+/", mail.outbox[0].body).group(1)
         response = self.client.get(link + "bad-token/", follow=True)
         self.assertContains(response, "Link not valid")

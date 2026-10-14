@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}Quarters{% endblock %}
+{% block main_class %}wide{% endblock %}
+
+{% block content %}
+<div class="card status-box">
+  <div>
+    <h1 style="margin-bottom:6px">Quarters up for auction</h1>
+    {% if not applicant %}
+      <div>Your status: <span class="badge badge-bad">Not registered</span>
+        <span class="muted">Register for bidding to apply for quarters.</span></div>
+    {% else %}
+      <div>Your status:
+        {% if applicant.status == "ACTIVE" %}<span class="badge badge-ok">Active</span>
+        {% elif applicant.status == "REJECTED" or applicant.status == "SUSPENDED" %}<span class="badge badge-bad">{{ applicant.get_status_display }}</span>
+        {% else %}<span class="badge badge-wait">Documents pending</span>{% endif %}
+        <span class="muted">Application {{ applicant.application_no }} &middot;
+          eligible to bid on {{ eligible_count }} quarter{{ eligible_count|pluralize }} below &middot;
+          allotted {{ allotted }} of {{ max_quarters }}</span></div>
+      {% if applicant.status == "REGISTERED" or applicant.status == "DOCUMENTS_PENDING" %}
+        <p class="muted" style="margin:6px 0 0">Bring your original documents and EMD receipts to the auction
+          office. You can bid once your status is Active and that quarter's EMD is verified.</p>
+      {% endif %}
+    {% endif %}
+  </div>
+  <div>
+    {% if applicant %}
+      <a class="btn" href="{% url 'applications:mine' %}">My application</a>
+    {% elif not user.is_staff %}
+      <a class="btn" href="{% url 'applications:apply' %}">Register for bidding</a>
+    {% endif %}
+  </div>
+</div>
+
+<div class="card">
+  {% if auctions %}
+    {% include "auctions/includes/quarter_table.html" with auctions=auctions show_mine=True %}
+  {% else %}
+    <p class="muted">No auctions are scheduled at the moment.</p>
+  {% endif %}
+</div>
+
+{% if recently_closed %}
+<div class="card">
+  <h2>Recently closed</h2>
+  {% include "auctions/includes/closed_table.html" with auctions=recently_closed %}
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+  <script src="{% static 'auctions/countdown.js' %}" data-server-now="{{ server_now|date:'c' }}"></script>
+{% endblock %}

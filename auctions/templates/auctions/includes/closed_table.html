@@ -1,0 +1,21 @@
+{% comment %}Recently closed auctions. PRIVACY: the winner is shown by anonymous code only.{% endcomment %}
+{% load humanize %}
+<div class="table-wrap">
+<table class="data">
+  <thead><tr><th>Quarter</th><th>Locality</th><th>Closed</th><th>Result</th>
+    <th class="num">Winning bid<br><small>Rs.</small></th><th class="num">Bids</th><th></th></tr></thead>
+  <tbody>
+  {% for a in auctions %}
+    <tr>
+      <td><strong>{{ a.quarter.quarter_no }}</strong></td>
+      <td class="wrap">{{ a.quarter.locality }}</td>
+      <td><small>{{ a.closed_at|date:"d M, H:i" }}</small></td>
+      <td>{% if a.winning_bid %}Won by {{ a.winning_bid.participation.anonymous_code }}{% else %}<span class="muted">{{ a.get_status_display }}</span>{% endif %}</td>
+      <td class="num">{% if a.winning_bid %}<strong>{{ a.winning_bid.amount|floatformat:"-2"|intcomma }}</strong>{% else %}&ndash;{% endif %}</td>
+      <td class="num">{{ a.total_bids }}</td>
+      <td><a class="btn btn-small btn-secondary" href="{% url 'auctions:auction_room' a.pk %}">View</a></td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>

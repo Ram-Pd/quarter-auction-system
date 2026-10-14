@@ -4,23 +4,24 @@ from django.urls import path, reverse_lazy
 from config.context_processors import reset_link_hours
 
 from . import views
-from .forms import UrnLoginForm
+from .forms import EmailLoginForm
 
 app_name = "accounts"
 
 urlpatterns = [
-    # Registration (Milestone 2)
-    path("register/", views.register, name="register"),
-    path("register/done/", views.register_done, name="register_done"),
+    # Sign-up: details -> email code -> password (accounts/views.py)
+    path("signup/", views.signup, name="signup"),
+    path("signup/verify/", views.signup_verify, name="signup_verify"),
+    path("signup/resend/", views.signup_resend, name="signup_resend"),
+    path("signup/password/", views.signup_password, name="signup_password"),
 
-    # Activation, login, logout (Milestone 3)
-    path("activate/", views.activate, name="activate"),
+    # Login with email + password; logout (POST only)
     path("login/", auth_views.LoginView.as_view(
         template_name="accounts/login.html",
-        authentication_form=UrnLoginForm,
+        authentication_form=EmailLoginForm,
         redirect_authenticated_user=True,
     ), name="login"),
-    path("logout/", auth_views.LogoutView.as_view(), name="logout"),  # POST only
+    path("logout/", auth_views.LogoutView.as_view(), name="logout"),
 
     # Password reset: Django's built-in, token-based flow
     path("password-reset/", auth_views.PasswordResetView.as_view(

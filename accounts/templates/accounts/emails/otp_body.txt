@@ -1,0 +1,11 @@
+{% autoescape off %}Hello,
+
+Your code to confirm this email address for the {{ AUCTION_TITLE }} is:
+
+    {{ code }}
+
+It is valid for {{ minutes }} minutes and can be used once. Do not share it with anyone;
+the auction office will never ask you for it.
+
+If you did not try to create an account, ignore this email.
+{% include "emails/training_footer.txt" %}{% endautoescape %}

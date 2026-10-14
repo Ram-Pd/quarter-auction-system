@@ -1,76 +1,98 @@
-from django.contrib.auth.models import User
+"""Admin screens for quarters and auctions, and who may see what."""
+from datetime import timedelta
+from decimal import Decimal
+
 from django.test import TestCase
 from django.urls import reverse
+from django.utils import timezone
 
-from accounts.models import Applicant
-from auctions.models import Quarter
+from accounts.models import User
+from applications.tests.factories import make_staff
+from auctions.models import Auction, Quarter
+from auctions.tests.factories import make_auction, make_bidder, make_quarter
 
-QUARTER_FORM = {
-    "quarter_no": "b-214",
-    "sector": "Sector 4",
-    "location_block": "Near market",
-    "quarter_type": "B",
-    "floor": "2nd",
-    "area_sqft": "750",
-    "base_rate": "4500",
-    "status": "VACANT",
-}
-
-APPLICANT_FORM = {
-    "name": "Test Applicant",
-    "father_name": "Test Father",
-    "mobile": "9876543210",
-    "email": "test@example.com",
-    "address": "Fake address",
-    "state": "Jharkhand",
-    "pin_code": "827001",
-    "application_no": "APP-0001",
-    "application_date": "2026-10-09",
-    "urn": "1234567",
-    "urn_date": "2026-10-09",
-}
+QUARTER_FORM = {"quarter_no": "b-214", "sector": "Sector 4", "location_block": "Near market", "quarter_type": "B",
+                "floor": "2nd", "area_sqft": "750", "base_rate": "45000", "emd_amount": "9000", "status": "VACANT"}
 
 
 class AdminScreensTests(TestCase):
-    """The checks a person would do by hand in /admin/, automated."""
-
     def setUp(self):
-        self.admin = User.objects.create_superuser("admin", "admin@example.com", "pass")
-        self.client.force_login(self.admin)
+        self.superuser = User.objects.create_superuser("boss@example.com", "pass", full_name="Boss")
+        self.client.force_login(self.superuser)
         self.quarter_add = reverse("admin:auctions_quarter_add")
-        self.applicant_add = reverse("admin:accounts_applicant_add")
 
     def test_admin_pages_load(self):
-        for name in ["admin:auctions_quarter_changelist", "admin:auctions_quarter_add",
-                     "admin:accounts_applicant_changelist", "admin:accounts_applicant_add"]:
-            with self.subTest(page=name):
-                self.assertEqual(self.client.get(reverse(name)).status_code, 200)
+        auction = make_auction()
+        for url in [reverse("admin:auctions_quarter_changelist"), self.quarter_add,
+                    reverse("admin:auctions_auction_changelist"),
+                    reverse("admin:auctions_auction_change", args=[auction.pk]),
+                    reverse("admin:applications_applicant_changelist"),
+                    reverse("admin:applications_auditlog_changelist"),
+                    reverse("admin:applications_documentchecklistitem_changelist"),
+                    reverse("admin:accounts_user_changelist"), reverse("admin:accounts_user_add")]:
+            with self.subTest(url=url):
+                self.assertEqual(self.client.get(url).status_code, 200)
 
-    def test_add_quarter_saves_upper_case(self):
-        response = self.client.post(self.quarter_add, QUARTER_FORM)
-        self.assertEqual(response.status_code, 302)  # redirect = saved
+    def test_add_quarter_saves_upper_case_and_checks_values(self):
+        self.assertEqual(self.client.post(self.quarter_add, QUARTER_FORM).status_code, 302)
         self.assertTrue(Quarter.objects.filter(quarter_no="B-214").exists())
-
-    def test_duplicate_quarter_shows_error(self):
-        self.client.post(self.quarter_add, QUARTER_FORM)
         response = self.client.post(self.quarter_add, {**QUARTER_FORM, "quarter_no": "B-214"})
-        self.assertEqual(response.status_code, 200)  # form redisplayed
         self.assertContains(response, "already exists")
-        self.assertEqual(Quarter.objects.count(), 1)
+        response = self.client.post(self.quarter_add, {**QUARTER_FORM, "quarter_no": "X-1", "emd_amount": "0"})
+        self.assertContains(response, "EMD amount must be greater than 0.")
 
-    def test_negative_area_shows_error(self):
-        response = self.client.post(self.quarter_add, {**QUARTER_FORM, "area_sqft": "-5"})
-        self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Area must be greater than 0.")
-        self.assertEqual(Quarter.objects.count(), 0)
+    def test_duration_editable_before_start_and_moves_the_deadline(self):
+        auction = make_auction(starts_in=timedelta(days=1), lasts=timedelta(minutes=5))
+        url = reverse("admin:auctions_auction_change", args=[auction.pk])
+        start = timezone.localtime(auction.start_time)
+        response = self.client.post(url, {
+            "start_time_0": start.strftime("%Y-%m-%d"), "start_time_1": start.strftime("%H:%M:%S"),
+            "duration_minutes": "8", "increment_percent": "0.50", "anti_snipe_seconds": "30",
+            "bids-TOTAL_FORMS": "0", "bids-INITIAL_FORMS": "0"})   # the (empty) read-only bid list
+        self.assertEqual(response.status_code, 302, response.content[:300])
+        auction.refresh_from_db()
+        self.assertEqual(auction.duration_minutes, 8)
+        self.assertEqual(auction.end_time, auction.start_time + timedelta(minutes=8))
+        self.assertEqual(auction.increment_percent, Decimal("0.50"))
+        self.assertEqual(auction.anti_snipe_seconds, 30)
 
-    def test_applicant_bad_urn_shows_error(self):
-        response = self.client.post(self.applicant_add, {**APPLICANT_FORM, "urn": "123"})
-        self.assertContains(response, "URN must be exactly 7 digits.")
-        self.assertEqual(Applicant.objects.count(), 0)
+    def test_timing_locked_once_bidding_started(self):
+        auction = make_auction()   # live
+        response = self.client.get(reverse("admin:auctions_auction_change", args=[auction.pk]))
+        self.assertNotContains(response, 'name="duration_minutes"')
+        self.assertNotContains(response, 'name="increment_percent"')
 
-    def test_applicant_cannot_be_activated_from_admin(self):
-        # Even if someone forges is_activated in the POST, the field is read-only.
-        response = self.client.post(self.applicant_add, {**APPLICANT_FORM, "is_activated": "on"})
-        self.assertEqual(response.status_code, 302)
-        self.assertFalse(Applicant.objects.get().is_activated)
+    def test_auctions_cannot_be_deleted(self):
+        auction = make_auction()
+        response = self.client.get(reverse("admin:auctions_auction_delete", args=[auction.pk]))
+        self.assertEqual(response.status_code, 403)
+
+
+class RolePrivacyTests(TestCase):
+    def setUp(self):
+        self.auction = make_auction()
+        self.applicant, _, _ = make_bidder(self.auction, 1)
+
+    def test_auction_admin_sees_bids_by_code_only(self):
+        from auctions.bidding import place_bid
+        import uuid
+        place_bid(self.auction.pk, self.applicant, "45000", uuid.uuid4())
+        self.client.force_login(make_staff("aa@example.com", "Auction Admin"))
+        response = self.client.get(reverse("admin:auctions_bid_changelist"))
+        self.assertContains(response, "Bidder 1")
+        for private in [self.applicant.name, self.applicant.urn, self.applicant.application_no]:
+            self.assertNotContains(response, private)
+        page = self.client.get(reverse("admin:auctions_auction_change", args=[self.auction.pk]))
+        self.assertNotContains(page, self.applicant.name)
+
+    def test_participation_mapping_is_superuser_only(self):
+        url = reverse("admin:auctions_participation_changelist")
+        for group in ["Auction Admin", "Verification Officer"]:
+            self.client.force_login(make_staff(f"{group[:3].lower()}@example.com", group))
+            self.assertEqual(self.client.get(url).status_code, 403)
+        self.client.force_login(User.objects.create_superuser("boss@example.com", "x", full_name="Boss"))
+        self.assertContains(self.client.get(url), self.applicant.application_no)
+
+    def test_verification_officer_cannot_edit_auctions(self):
+        self.client.force_login(make_staff("vo@example.com", "Verification Officer"))
+        self.assertEqual(self.client.get(reverse("admin:auctions_auction_changelist")).status_code, 403)

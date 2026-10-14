@@ -1,0 +1,27 @@
+{% comment %}
+  BIDDING RULES: the one place this text lives (shown on the home page).
+  PLACEHOLDER wording, pending mentor confirmation. NOT official SAIL policy.
+  Numbers come from settings.py, so they stay correct if a setting changes.
+{% endcomment %}
+<p class="muted">Placeholder rules for this training project, not official SAIL policy.</p>
+<ol class="rules">
+  <li>Create an account with your email (confirmed by a one-time code), then log in.</li>
+  <li>Click <strong>Register for bidding</strong>: give your details, Aadhaar and PAN, and select the
+    quarters you want. You may apply for as many quarters as you like, but you can be
+    <strong>allotted at most {{ MAX_QUARTERS_PER_APPLICANT }}</strong>.</li>
+  <li>You receive an Application Form and an Intimation Slip by email. The slip shows your URN and
+    the EMD (earnest money deposit) for each quarter you selected.</li>
+  <li>Pay the EMD for each quarter through SBI Collect using your URN, then bring your original
+    documents and the receipts to the auction office.</li>
+  <li>You can bid on a quarter only when your registration is <strong>active</strong> and that
+    quarter's EMD is <strong>verified</strong>. Paying the EMD for one quarter gives no right to bid on another.</li>
+  <li>Each quarter has its own bidding slot (usually {{ DEFAULT_AUCTION_DURATION_MINUTES }} minutes).
+    Several slots may run at the same time.</li>
+  <li>The first bid must be at least the base rate. Every later bid must beat the current highest bid by at
+    least one <strong>step</strong> ({{ DEFAULT_INCREMENT_PERCENT|floatformat:"-2" }}% of the base rate,
+    rounded to whole rupees). Bids are in whole rupees.</li>
+  <li>Bidders appear only as anonymous codes such as "Bidder 7". Your name is never shown to anyone else.</li>
+  <li>When the slot ends, the highest valid bid wins. If the highest bidder has already been allotted
+    {{ MAX_QUARTERS_PER_APPLICANT }} quarters, the next-highest eligible bidder wins instead.</li>
+  <li>The winner is informed by email. The result is published on the auction page.</li>
+</ol>

@@ -1,0 +1,59 @@
+{% comment %}
+  The table of quarters on auction. Used by the public home page and the
+  logged-in listing. Expects: auctions (each with .current_phase set by the view).
+  With show_mine=True (listing page) an extra column shows the user's OWN status
+  for each quarter (a.applied / a.eligible / a.can_apply, set by the view).
+  PRIVACY: quarter and price data only, never bidder information.
+{% endcomment %}
+{% load humanize %}
+<div class="table-wrap">
+<table class="data">
+  <thead>
+    <tr>
+      <th>Quarter</th>
+      <th>Locality</th>
+      <th class="num">Area<br><small>sq ft</small></th>
+      <th class="num">Base rate<br><small>Rs.</small></th>
+      <th class="num">EMD<br><small>Rs.</small></th>
+      <th>Bidding slot<br><small>IST</small></th>
+      <th>Status</th>
+      {% if show_mine %}<th>You</th>{% endif %}
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for a in auctions %}
+    <tr>
+      <td><strong>{{ a.quarter.quarter_no }}</strong><br>
+        <small class="muted">{{ a.quarter.get_quarter_type_display }}</small></td>
+      <td class="wrap">{{ a.quarter.locality }}<br>
+        <small class="muted">{{ a.quarter.floor }} floor</small></td>
+      <td class="num">{{ a.quarter.area_sqft|floatformat:0|intcomma }}</td>
+      <td class="num">{{ a.quarter.base_rate|floatformat:"-2"|intcomma }}</td>
+      <td class="num">{{ a.quarter.emd_amount|floatformat:"-2"|intcomma }}</td>
+      <td><small>{{ a.start_time|date:"d M Y" }}<br>{{ a.start_time|date:"H:i" }} &ndash; {{ a.end_time|date:"H:i" }}
+        ({{ a.duration_minutes }} min)</small></td>
+      <td>
+        <span class="badge badge-{{ a.current_phase|lower }}">{{ a.current_phase.label }}</span><br>
+        {% if a.current_phase == "UPCOMING" %}
+          <small data-countdown="{{ a.start_time|date:'c' }}" data-prefix="Starts in "></small>
+        {% elif a.current_phase == "LIVE" %}
+          <small data-countdown="{{ a.end_time|date:'c' }}" data-prefix="Ends in "></small>
+          {% if a.current_highest_bid %}<br><small>Highest: Rs. {{ a.current_highest_bid|floatformat:"-2"|intcomma }}</small>{% endif %}
+        {% endif %}
+      </td>
+      {% if show_mine %}
+        <td>
+          {% if a.eligible %}<span class="badge badge-ok">Eligible to bid</span>
+          {% elif a.applied %}<span class="badge badge-wait">Applied</span>
+          {% elif a.can_apply %}<small class="muted">Not applied</small>
+          {% else %}<small class="muted">Applications closed</small>{% endif %}
+        </td>
+      {% endif %}
+      <td><a class="btn btn-small {% if not a.eligible %}btn-secondary{% endif %}"
+             href="{% url 'auctions:auction_room' a.pk %}">{% if a.eligible %}Bid{% else %}View{% endif %}</a></td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>

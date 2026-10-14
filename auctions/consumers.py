@@ -13,6 +13,11 @@ Messages TO the browser (JSON), all built in auctions/realtime.py:
     {"type": "bid_result", "ok": true/false, "client_bid_id": ..., "message": ...}
                                           -> only to the tab that sent the bid
 
+Who may connect (checked per auction, on every connection):
+    - anyone may WATCH (the auction page is public; messages hold no personal data)
+    - only an ELIGIBLE applicant with a code in THIS auction may BID
+      (applications/eligibility.py); place_bid() checks eligibility again for every bid
+
 This is a *synchronous* consumer: Channels runs it in a worker thread, so it
 can use the Django ORM directly, just like a normal view.
 """
@@ -23,7 +28,8 @@ from asgiref.sync import async_to_sync
 from channels.generic.websocket import JsonWebsocketConsumer
 from django.conf import settings
 
-from accounts.models import Applicant
+from applications import eligibility
+from applications.models import Applicant
 
 from . import realtime
 from .bidding import BidRejected, place_bid
@@ -32,9 +38,7 @@ from .models import Auction, Participation
 
 logger = logging.getLogger(__name__)
 
-# WebSocket close codes (4000-4999 are free for applications to use).
-CLOSE_NOT_LOGGED_IN = 4401
-CLOSE_FORBIDDEN = 4403
+# WebSocket close code (4000-4999 are free for applications to use).
 CLOSE_NOT_FOUND = 4404
 
 
@@ -48,24 +52,16 @@ class AuctionConsumer(JsonWebsocketConsumer):
         self.participation = None
         self.last_bid_at = 0.0
 
-        user = self.scope.get("user")
-        if user is None or not user.is_authenticated:
-            self.close(code=CLOSE_NOT_LOGGED_IN)
-            return
-
         auction = Auction.objects.select_related("quarter").filter(pk=self.auction_id).first()
         if auction is None:
             self.close(code=CLOSE_NOT_FOUND)
             return
 
-        # AUTHORISATION, per auction: only applicants who joined THIS auction may
-        # connect (and bid). Staff may connect to watch, but cannot bid.
-        applicant = Applicant.for_user(user)
-        if applicant:
+        # AUTHORISATION, per auction: this connection may BID only if the user is
+        # eligible for THIS quarter and has a code in THIS auction. Everyone else watches.
+        applicant = Applicant.for_user(self.scope.get("user"))
+        if applicant and eligibility.check(applicant, auction.quarter).allowed:
             self.participation = Participation.objects.filter(auction=auction, applicant=applicant).first()
-        if self.participation is None and not user.is_staff:
-            self.close(code=CLOSE_FORBIDDEN)
-            return
 
         async_to_sync(self.channel_layer.group_add)(self.group, self.channel_name)
         self.accept()
@@ -101,7 +97,7 @@ class AuctionConsumer(JsonWebsocketConsumer):
                             "message": message})
 
         if self.participation is None:
-            reply(False, "Only participants can bid.")
+            reply(False, "You are not eligible to bid in this auction.")
             return
 
         # Anti-flooding: one bid per connection per AUCTION_BID_MIN_INTERVAL_SECONDS.
@@ -125,7 +121,7 @@ class AuctionConsumer(JsonWebsocketConsumer):
         if outcome.duplicate:
             reply(True, "This bid was already accepted.")
         else:
-            reply(True, f"Your bid of Rs. {outcome.bid.amount:,.2f} was accepted.")
+            reply(True, f"Your bid of Rs. {outcome.bid.amount:,.0f} was accepted.")
         # Everyone (including this tab) gets the bid itself via the group broadcast.
 
     # ------------------------------------------------------------ from group

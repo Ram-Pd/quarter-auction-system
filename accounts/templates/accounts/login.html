@@ -1,17 +1,20 @@
 {% extends "base.html" %}
-{% block title %}Log in{% endblock %}
+{% block title %}Login{% endblock %}
 {% block content %}
 <div class="card">
-  <h1>Log in</h1>
+  <h1>Login</h1>
   <form method="post" novalidate>
     {% csrf_token %}
     {% include "includes/form_fields.html" with form=form %}
     <input type="hidden" name="next" value="{{ next }}">
     <button type="submit" class="btn">Log in</button>
   </form>
-  <p class="muted" style="margin-top:18px">
-    <a href="{% url 'accounts:password_reset' %}">Forgot password?</a> &middot;
-    Not activated yet? <a href="{% url 'accounts:activate' %}">Activate your account</a>.
-  </p>
+  <p class="muted" style="margin-top:18px"><a href="{% url 'accounts:password_reset' %}">Forgot password?</a></p>
+</div>
+
+<div class="card">
+  <h2>New here?</h2>
+  <p>Create an account with your name, phone number and email. We confirm your email with a one-time code.</p>
+  <a class="btn btn-secondary" href="{% url 'accounts:signup' %}">Create account</a>
 </div>
 {% endblock %}

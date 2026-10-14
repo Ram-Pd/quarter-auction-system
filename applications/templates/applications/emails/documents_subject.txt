@@ -1,0 +1,1 @@
+Bidding registration {{ applicant.application_no }}: your documents

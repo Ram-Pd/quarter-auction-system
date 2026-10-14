@@ -1,15 +1,47 @@
 {% extends "base.html" %}
+{% load static %}
 {% block title %}Home{% endblock %}
+{% block main_class %}wide{% endblock %}
 {% block content %}
 <div class="card">
   <h1>Vacant Quarter Auction</h1>
-  <p>How it works:</p>
-  <ol>
-    <li>Register below. You will receive your Application Form and Intimation Slip (with your URN) by email.</li>
-    <li>Pay the EMD through SBI Collect using your URN.</li>
-    <li>After the auction office verifies your payment, activate your account with your email and URN.</li>
-    <li>Log in, see the quarters on auction, and choose which to bid on.</li>
-  </ol>
-  <a class="btn" href="{% url 'accounts:register' %}">Register</a>
+  <p>Residential quarters are allotted by open, anonymous online auction. Each quarter has its own
+    bidding slot. Read the rules below, then create an account and register for bidding.</p>
+  {% if user.is_authenticated %}
+    <a class="btn" href="{% url 'auctions:listing' %}">Go to the quarter list</a>
+  {% else %}
+    <a class="btn" href="{% url 'accounts:signup' %}">Create account</a>
+    <a class="btn btn-secondary" href="{% url 'accounts:login' %}">Login</a>
+  {% endif %}
 </div>
+
+<div class="card">
+  <h2>Quarters on auction ({{ auctions|length }})</h2>
+  <p class="muted">Times are Indian Standard Time. Countdowns update automatically.</p>
+  {% if auctions %}
+    {% include "auctions/includes/quarter_table.html" with auctions=auctions %}
+  {% else %}
+    <p class="muted">No auctions are scheduled at the moment.</p>
+  {% endif %}
+</div>
+
+{% if recently_closed %}
+<div class="card">
+  <h2>Recent results</h2>
+  {% include "auctions/includes/closed_table.html" with auctions=recently_closed %}
+</div>
+{% endif %}
+
+<div class="card" id="rules">
+  <h2>Bidding rules</h2>
+  {% include "content/rules.html" %}
+</div>
+
+<div class="card" id="faq">
+  <h2>Frequently asked questions</h2>
+  {% include "content/faq.html" %}
+</div>
+{% endblock %}
+{% block scripts %}
+  <script src="{% static 'auctions/countdown.js' %}" data-server-now="{{ server_now|date:'c' }}"></script>
 {% endblock %}

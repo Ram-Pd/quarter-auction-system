@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}Register for bidding{% endblock %}
+{% block main_class %}wide{% endblock %}
+{% block content %}
+<div class="card">
+  <h1>Register for bidding</h1>
+  <p class="muted">After you submit, we email your Application Form and Intimation Slip (with your URN and the
+    EMD for each quarter). Your Aadhaar and PAN are stored encrypted and are only ever shown masked.</p>
+  <form method="post" novalidate>
+    {% csrf_token %}
+    {% if form.non_field_errors %}<div class="alert alert-err">{{ form.non_field_errors }}</div>{% endif %}
+    {% for field in form.personal_fields %}
+      {{ field.label_tag }}
+      {{ field.errors }}
+      {{ field }}
+      {% if field.help_text %}<div class="help">{{ field.help_text }}</div>{% endif %}
+    {% endfor %}
+
+    {% include "applications/includes/quarter_picker.html" %}
+
+    <div class="check">
+      {{ form.declaration.errors }}
+      {{ form.declaration }} {{ form.declaration.label_tag }}
+    </div>
+    <button type="submit" class="btn">Submit application</button>
+  </form>
+</div>
+{% endblock %}
+{% block scripts %}<script src="{% static 'applications/quarter_picker.js' %}"></script>{% endblock %}

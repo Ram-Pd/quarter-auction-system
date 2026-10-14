@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}Add quarters{% endblock %}
+{% block main_class %}wide{% endblock %}
+{% block content %}
+<p><a href="{% url 'applications:mine' %}">&larr; My application</a></p>
+<div class="card">
+  <h1>Add quarters to application {{ applicant.application_no }}</h1>
+  <p class="muted">We will email a supplementary Intimation Slip for the added quarters only. Pay their EMD with the
+    same URN ({{ applicant.urn }}).</p>
+  <form method="post" novalidate>
+    {% csrf_token %}
+    {% include "applications/includes/quarter_picker.html" %}
+    {% if form.open_auctions %}<button type="submit" class="btn">Add selected quarters</button>{% endif %}
+  </form>
+</div>
+{% endblock %}
+{% block scripts %}<script src="{% static 'applications/quarter_picker.js' %}"></script>{% endblock %}

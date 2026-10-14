@@ -1,0 +1,166 @@
+{% extends "admin/base_site.html" %}
+{% load humanize %}
+{% comment %}
+  Verification screen (applications/admin.py ApplicantAdmin.verify_view).
+  Every button posts an "action"; the work is done in applications/services.py,
+  which also writes the audit log.
+{% endcomment %}
+
+{% block extrastyle %}{{ block.super }}
+<style>
+  .vf-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 1000px) { .vf-grid { grid-template-columns: 1fr; } }
+  .vf-box { border: 1px solid var(--hairline-color); border-radius: 4px; padding: 12px 16px; margin-bottom: 16px; }
+  .vf-box h2 { margin-top: 0; }
+  .vf-box table { width: 100%; }
+  .vf-ok { color: #1b5e20; font-weight: 600; }
+  .vf-bad { color: #b00020; font-weight: 600; }
+  .vf-inline input[type=text], .vf-inline input[type=date] { width: 9em; }
+  .vf-reveal { background: #fff3cd; padding: 8px 12px; border-radius: 4px; font-family: monospace; font-size: 15px; }
+</style>
+{% endblock %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+  <a href="{% url 'admin:index' %}">Home</a>
+  &rsaquo; <a href="{% url 'admin:app_list' app_label=opts.app_label %}">{{ opts.app_config.verbose_name }}</a>
+  &rsaquo; <a href="{% url 'admin:applications_applicant_changelist' %}">Applicants</a>
+  &rsaquo; Verify {{ applicant.application_no }}
+</div>
+{% endblock %}
+
+{% block content %}
+<div id="content-main">
+<p>Status: <strong>{{ applicant.get_status_display }}</strong>
+  {% if applicant.status_reason %}(reason: {{ applicant.status_reason }}){% endif %}
+  &middot; URN {{ applicant.urn }} &middot; allotted {{ allotted }} of {{ MAX_QUARTERS_PER_APPLICANT }}</p>
+
+<div class="vf-grid">
+  <div>
+    {# ---------------- applicant details ---------------- #}
+    <div class="vf-box">
+      <h2>Applicant</h2>
+      <table>
+        <tr><th>Name</th><td>{{ applicant.name }}</td></tr>
+        <tr><th>Father's name</th><td>{{ applicant.father_name }}</td></tr>
+        <tr><th>Phone / email</th><td>{{ applicant.phone }} / {{ applicant.email }}</td></tr>
+        <tr><th>Address</th><td>{{ applicant.address|linebreaksbr }}<br>{{ applicant.state }} {{ applicant.pin_code }}</td></tr>
+        <tr><th>Aadhaar</th><td>{{ applicant.masked_aadhaar }}</td></tr>
+        <tr><th>PAN</th><td>{{ applicant.masked_pan }}</td></tr>
+        <tr><th>Applied</th><td>{{ applicant.application_date|date:"d M Y" }}</td></tr>
+      </table>
+      {% if revealed %}
+        <p class="vf-reveal">Aadhaar: {{ revealed.0 }}<br>PAN: {{ revealed.1 }}</p>
+        <p class="help">This reveal has been recorded in the audit log. Reload the page to hide the numbers.</p>
+      {% elif can_reveal %}
+        <form method="post" class="vf-inline">{% csrf_token %}
+          <input type="hidden" name="action" value="reveal">
+          <input type="text" name="reason" placeholder="Reason (required)" required>
+          <input type="submit" value="Reveal full Aadhaar / PAN (audited)">
+        </form>
+      {% endif %}
+    </div>
+
+    {# ---------------- document checklist ---------------- #}
+    <div class="vf-box">
+      <h2>Document checklist (originals seen in person)</h2>
+      <form method="post">{% csrf_token %}
+        <input type="hidden" name="action" value="documents">
+        <table>
+          {% for item, check in items %}
+            <tr>
+              <td><input type="checkbox" name="items" value="{{ item.pk }}" id="item{{ item.pk }}" {% if check.checked %}checked{% endif %}></td>
+              <td><label for="item{{ item.pk }}"><strong>{{ item.name }}</strong>{% if item.required %} *{% endif %}</label>
+                <div class="help">{{ item.description }}</div></td>
+              <td class="help">{% if check.checked %}{{ check.checked_by }}, {{ check.checked_at|date:"d M Y H:i" }}{% endif %}</td>
+            </tr>
+          {% endfor %}
+        </table>
+        <p class="help">* required for activation</p>
+        <input type="submit" value="Save checklist">
+      </form>
+    </div>
+
+    {# ---------------- status ---------------- #}
+    <div class="vf-box">
+      <h2>Status</h2>
+      {% if applicant.status == "REJECTED" %}
+        <p class="vf-bad">Rejected. No further changes are possible.</p>
+      {% else %}
+        {% if applicant.status != "ACTIVE" %}
+          {% if missing %}<p class="vf-bad">Activation needs: {{ missing|join:", " }}</p>{% endif %}
+          <form method="post" style="display:inline">{% csrf_token %}
+            <input type="hidden" name="action" value="activate">
+            <input type="submit" value="Activate bidder" class="default" {% if missing %}disabled{% endif %}>
+          </form>
+        {% else %}
+          <form method="post" class="vf-inline">{% csrf_token %}
+            <input type="hidden" name="action" value="suspend">
+            <input type="text" name="reason" placeholder="Reason (required)" required>
+            <input type="submit" value="Suspend">
+          </form>
+        {% endif %}
+        <form method="post" class="vf-inline" style="margin-top:8px">{% csrf_token %}
+          <input type="hidden" name="action" value="reject">
+          <input type="text" name="reason" placeholder="Reason (required)" required>
+          <input type="submit" value="Reject application">
+        </form>
+      {% endif %}
+    </div>
+  </div>
+
+  <div>
+    {# ---------------- EMD per quarter ---------------- #}
+    <div class="vf-box">
+      <h2>EMD receipts, per quarter</h2>
+      <p class="help">The applicant may bid on a quarter only when Active AND that quarter's EMD is verified.</p>
+      {% for a in applications %}
+        <div class="vf-box">
+          <strong>{{ a.quarter.quarter_no }}</strong> ({{ a.quarter.locality }}) &middot; EMD due
+          <strong>Rs. {{ a.emd_amount|floatformat:"-2"|intcomma }}</strong> &middot;
+          {% if a.emd_verified %}<span class="vf-ok">Verified</span> by {{ a.emd_verified_by }}, {{ a.emd_verified_at|date:"d M Y H:i" }}
+          {% else %}<span class="vf-bad">Not verified</span>{% endif %}
+          {% if a.amount_matches is not None %}
+            &middot; {% if a.amount_matches %}<span class="vf-ok">amount covers EMD</span>{% else %}<span class="vf-bad">amount is LESS than EMD</span>{% endif %}
+          {% endif %}
+
+          {% if a.emd_verified %}
+            <p>Receipt {{ a.emd_receipt_no }}, Rs. {{ a.emd_amount_paid|floatformat:"-2"|intcomma }}, paid {{ a.emd_payment_date|date:"d M Y" }}</p>
+            <form method="post" class="vf-inline">{% csrf_token %}
+              <input type="hidden" name="action" value="unverify_emd"><input type="hidden" name="application_id" value="{{ a.pk }}">
+              <input type="text" name="reason" placeholder="Reason (required)" required>
+              <input type="submit" value="Un-verify">
+            </form>
+          {% elif applicant.status != "REJECTED" %}
+            <form method="post" class="vf-inline" style="margin-top:6px">{% csrf_token %}
+              <input type="hidden" name="action" value="save_emd"><input type="hidden" name="application_id" value="{{ a.pk }}">
+              <input type="text" name="receipt_no" value="{{ a.emd_receipt_no }}" placeholder="Receipt / ref. no.">
+              <input type="text" name="amount_paid" value="{{ a.emd_amount_paid|default_if_none:'' }}" placeholder="Amount paid">
+              <input type="date" name="payment_date" value="{{ a.emd_payment_date|date:'Y-m-d' }}" max="{{ today|date:'Y-m-d' }}">
+              <input type="submit" value="Save receipt">
+            </form>
+            <form method="post" style="margin-top:6px">{% csrf_token %}
+              <input type="hidden" name="action" value="verify_emd"><input type="hidden" name="application_id" value="{{ a.pk }}">
+              <input type="submit" value="Mark EMD verified" {% if not a.amount_matches %}disabled{% endif %}>
+            </form>
+          {% endif %}
+        </div>
+      {% endfor %}
+    </div>
+
+    {# ---------------- audit log ---------------- #}
+    <div class="vf-box">
+      <h2>History (audit log)</h2>
+      <table>
+        {% for e in audit_entries %}
+          <tr><td class="help">{{ e.created_at|date:"d M Y H:i" }}</td><td>{{ e.actor|default:"system" }}</td><td>{{ e.summary }}
+            {% if e.details.reason %}<div class="help">Reason: {{ e.details.reason }}</div>{% endif %}</td></tr>
+        {% empty %}
+          <tr><td class="help">No entries yet.</td></tr>
+        {% endfor %}
+      </table>
+    </div>
+  </div>
+</div>
+</div>
+{% endblock %}

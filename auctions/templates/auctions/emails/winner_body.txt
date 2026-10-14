@@ -1,12 +1,12 @@
 {% autoescape off %}Dear {{ applicant.name }},
 
-Congratulations! Your bid was the highest in the {{ AUCTION_TITLE }}.
+Congratulations! You have won the auction for quarter {{ quarter.quarter_no }} in the {{ AUCTION_TITLE }}.
 
   Quarter number : {{ quarter.quarter_no }}
-  Sector/location: {{ quarter.sector }}, {{ quarter.location_block }}
+  Locality       : {{ quarter.sector }}, {{ quarter.location_block }}
   Floor          : {{ quarter.floor }}
   Area           : {{ quarter.area_sqft|floatformat:"0g" }} sq ft
-  Winning amount : Rs. {{ bid.amount|floatformat:"2g" }}
+  Winning amount : Rs. {{ bid.amount|floatformat:"0g" }}
   Your bidder code in this auction: {{ bid.participation.anonymous_code }}
 
 Next steps (placeholder, to be confirmed by the auction office):

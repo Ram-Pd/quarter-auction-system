@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% load humanize %}
+{% block title %}My application{% endblock %}
+{% block main_class %}wide{% endblock %}
+{% block content %}
+<div class="card status-box">
+  <div>
+    <h1 style="margin-bottom:6px">My application {{ applicant.application_no }}</h1>
+    <div>Status:
+      {% if applicant.status == "ACTIVE" %}<span class="badge badge-ok">Active</span>
+      {% elif applicant.status == "REJECTED" or applicant.status == "SUSPENDED" %}<span class="badge badge-bad">{{ applicant.get_status_display }}</span>
+      {% else %}<span class="badge badge-wait">Documents pending</span>{% endif %}
+      <span class="muted">&middot; allotted {{ allotted }} of {{ MAX_QUARTERS_PER_APPLICANT }} quarters</span>
+    </div>
+    {% if applicant.status_reason and applicant.status != "ACTIVE" %}<p class="msg-err">Reason: {{ applicant.status_reason }}</p>{% endif %}
+  </div>
+  <div>
+    {% if can_add %}<a class="btn" href="{% url 'applications:add' %}">Add quarters</a>{% endif %}
+    <a class="btn btn-secondary" href="{% url 'auctions:listing' %}">Quarter list</a>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Quarters you applied for</h2>
+  <p class="muted">You can bid on a quarter when your status is Active AND that quarter's EMD is verified.</p>
+  <div class="table-wrap">
+    <table class="data">
+      <thead><tr><th>Quarter</th><th>Locality</th><th class="num">EMD<br><small>Rs.</small></th><th>EMD receipt</th><th>Bidding slot</th></tr></thead>
+      <tbody>
+      {% for a in applications %}
+        <tr>
+          <td><strong>{{ a.quarter.quarter_no }}</strong></td>
+          <td class="wrap">{{ a.quarter.locality }}</td>
+          <td class="num">{{ a.emd_amount|floatformat:"-2"|intcomma }}</td>
+          <td>{% if a.emd_verified %}<span class="badge badge-ok">Verified</span>{% else %}<span class="badge badge-wait">Not verified yet</span>{% endif %}</td>
+          <td>{% with auction=a.quarter.auctions.last %}{% if auction %}<small>{{ auction.start_time|date:"d M Y, H:i" }}</small>
+            <a class="btn btn-small btn-secondary" href="{% url 'auctions:auction_room' auction.pk %}">Open</a>{% endif %}{% endwith %}</td>
+        </tr>
+      {% endfor %}
+        <tr><td colspan="2"><strong>Total EMD</strong></td><td class="num"><strong>{{ total_emd|floatformat:"-2"|intcomma }}</strong></td><td colspan="2"></td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Your details</h2>
+  <table class="details">
+    <tr><th>Name</th><td>{{ applicant.name }}</td></tr>
+    <tr><th>Father's name</th><td>{{ applicant.father_name }}</td></tr>
+    <tr><th>Address</th><td>{{ applicant.address|linebreaksbr }}<br>{{ applicant.state }} {{ applicant.pin_code }}</td></tr>
+    <tr><th>Aadhaar</th><td>{{ applicant.masked_aadhaar }}</td></tr>
+    <tr><th>PAN</th><td>{{ applicant.masked_pan }}</td></tr>
+    <tr><th>URN</th><td>{{ applicant.urn }} <small class="muted">(from {{ applicant.urn_date|date:"d M Y" }}; quote it when paying the EMD)</small></td></tr>
+    <tr><th>Documents emailed</th><td>{% if applicant.documents_emailed_at %}{{ applicant.documents_emailed_at|date:"d M Y, H:i" }}{% else %}<span class="msg-err">Not sent; contact the auction office.</span>{% endif %}</td></tr>
+  </table>
+</div>
+{% endblock %}

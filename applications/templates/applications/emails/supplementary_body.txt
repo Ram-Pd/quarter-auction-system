@@ -1,0 +1,9 @@
+{% autoescape off %}Dear {{ applicant.name }},
+
+You added these quarters to your application {{ applicant.application_no }}:
+{% for a in applications %}  {{ a.quarter.quarter_no }}  ({{ a.quarter.sector }}, {{ a.quarter.location_block }})  EMD Rs. {{ a.emd_amount|floatformat:"2g" }}
+{% endfor %}  Total EMD for these quarters: Rs. {{ total_emd|floatformat:"2g" }}
+
+The attached supplementary Intimation Slip lists ONLY these added quarters. Pay their EMD through
+SBI Collect with your URN, and bring the receipts to the auction office for verification.
+{% include "emails/training_footer.txt" %}{% endautoescape %}

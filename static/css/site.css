@@ -99,3 +99,27 @@ tr.flash td { animation: flash 2s ease-out; }
   main { margin: 16px auto; }
   .card { padding: 16px; }
 }
+
+/* Header login button, public home page */
+.btn-light { background: #fff; color: var(--brand) !important; }
+.site-header .btn-light { margin-top: 0; }
+ol.rules li { margin-bottom: 6px; }
+details { border-bottom: 1px solid var(--border); padding: 8px 0; }
+details summary { cursor: pointer; font-weight: 600; }
+details p { margin: 8px 0 4px; }
+.status-box { display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: center; justify-content: space-between; }
+.status-box .btn { margin-top: 0; }
+.badge-ok { background: #e8f5e9; color: var(--ok); }
+.badge-wait { background: #fff3cd; color: #6b4e00; }
+.badge-bad { background: #fdecea; color: var(--err); }
+
+/* Quarter picker (applications/templates/applications/includes/quarter_picker.html) */
+.picker-search { margin: 6px 0 8px; }
+.picker { max-height: 340px; overflow-y: auto; border: 1px solid var(--border); border-radius: 4px; }
+.picker table.data td { vertical-align: middle; }
+.picker label { display: block; margin: 0; font-weight: normal; cursor: pointer; }
+.picker-total { margin-top: 8px; font-weight: 600; }
+
+/* Quick bid buttons */
+.quick-bids { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.quick-bids .btn { margin-top: 0; }

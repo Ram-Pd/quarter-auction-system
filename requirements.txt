@@ -8,6 +8,7 @@ psycopg[binary]==3.3.6
 channels==4.3.2
 daphne==4.2.3
 channels-redis==4.3.0
+cryptography==50.0.2   # Aadhaar / PAN encryption at rest (applications/crypto.py)
 
 # Used only by the automated tests (reads text back out of generated PDFs)
 pypdf==6.20.0

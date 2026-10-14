@@ -20,58 +20,35 @@ I am not yet an expert in Django, databases, WebSockets, concurrency, or product
 - Keep a git-friendly workflow: suggest a commit message at the end of each milestone.
 
 ## 3. Project summary
-A Django web application to manage vacant-quarter auctions: Excel import of quarters, applicant registration, two emailed PDFs, offline EMD payment through SBI Collect, URN-based account activation, auction lobby, real-time anonymous bidding with Django Channels and WebSockets, automatic auction closure, and winner email.
+A Django web application to manage vacant-quarter auctions: public home page with rules and FAQ, email-OTP sign-up and email login, "Register for bidding" (multiple quarters, Aadhaar/PAN encrypted), two emailed PDFs, offline EMD payment through SBI Collect verified by an officer per quarter, Excel import of quarters with their bidding slots, real-time anonymous bidding with Django Channels and WebSockets, automatic closure with a 2-quarter allotment cap, and winner email.
+
+The workflow below follows Change Request #3 (`docs/CHANGE_REQUEST_3.md`, the mentor's final workflow), which superseded the original workflow.
 
 This is a proposed training system. Do not describe its workflow or business rules as official SAIL policy unless I provide authoritative confirmation.
 
-## 4. Business workflow
+## 4. Business workflow (Change Request #3)
 
-**Phase 1, Admin setup**
-- Admin imports vacant-quarter data from Excel, with validation and no duplicate quarter numbers.
-- Admin configures an auction per eligible quarter (start, end, minimum increment, anti-sniping extension).
-- Multiple auctions must be able to run simultaneously.
+**1. Public website (no login)**: home page with the quarters on auction (quarter no., locality = sector + location/block, type, floor, area, base rate, EMD, bidding date/time slot), bidding rules and FAQ (one editable place: `templates/content/`), and a Login button. All wording is placeholder text, never official SAIL policy.
 
-**Phase 2, Applicant registration**
-Collect: name, father's name, mobile number, email, address, state, PIN code. No password or URN is entered at this stage.
+**2. Sign-up**: name, phone (collected, NOT verified), email; then a 6-digit email OTP (stored hashed, 10-minute expiry, 5 wrong attempts max, resend cooldown, rate limits per email and per IP, single use); then a password (Django hashing + validators). The user is logged in and lands on the quarter listing. Secure password reset by email.
 
-**Phase 3, Two PDFs generated and emailed**
-- A. Auction Application Form: application number and date, QR code, auction and quarter details, applicant details and address, declaration.
-- B. Auction Intimation Slip: URN and URN date, applicant name and mobile, EMD amount, SBI Collect payment instructions.
-- URN: unique seven-digit number, system-generated for now (assumption). If SAIL supplies URNs, design an import mechanism instead.
+**3. Login and quarter listing**: login with email + password. The listing shows every quarter up for auction (including EMD and slot and status), the user's registration status (not registered / documents pending / active), and which quarters they are eligible for. "Register for bidding" button in the corner.
 
-**Phase 4, External EMD payment**
-- Applicant pays through SBI Collect using the URN.
-- Verification is manual and offline. No online payment gateway. Refunds are out of scope.
+**4. Register for bidding**: name (pre-filled), father's name, address/state/PIN (addition, to be confirmed), Aadhaar (12 digits, Verhoeff), PAN, and any number of quarters (searchable list with EMD per quarter and a running total). Aadhaar/PAN are encrypted at rest, masked everywhere (last 4 only), never logged or emailed, and revealed only through one audited admin action. On submit: Application (number + date), 7-digit URN (+ date), and ONE email (sent after commit, exactly once) with: A. Application Form (application no./date, QR, applicant details, quarters, declaration, URN); B. Intimation Slip (URN/date, name, phone, quarter table with EMD each and total, SBI Collect instructions). Quarters can be added later (supplementary slip for the added ones only) until N hours before their slot.
 
-**Phase 5, Account activation**
-- Applicant enters email + URN. The system verifies a matching, eligible applicant record. Applicant sets a password.
-- Username = URN. Use Django authentication and password hashing. Include secure password reset.
-- Never allow activation based only on publicly guessable information.
+**5. Offline verification (admin)**: the applicant brings originals and EMD receipts. The Verification Officer ticks a document checklist (admin-editable) and records/verifies the EMD receipt PER QUARTER (receipt no., amount, date, amount covers the EMD). "Activate" only when all required documents are ticked. Reject / suspend / un-verify need a reason. Every action is audit-logged (who, when). States: REGISTERED -> DOCUMENTS_PENDING -> ACTIVE (or REJECTED / SUSPENDED). Bidding right for a quarter = ACTIVE AND that quarter's EMD verified. Roles: "Verification Officer" (applicant data, verification) and "Auction Admin" (Excel import, auctions; no personal data).
 
-**Phase 6, Auction lobby**
-Show quarter number, sector/location, floor, area, base rate, start and end time, auction status, and relevant live information.
+**6. Admin uploads the quarter Excel**: each row creates a Quarter AND its Auction (SCHEDULED) atomically; the bidding window comes from the file (see section 9).
 
-**Phase 7, Real-time bidding** (Django Channels + WebSockets)
-- Each auction has its own WebSocket group. Different auctions run at the same time.
-- A participant gets an anonymous code such as "Bidder 7" per auction, unique within that auction. The same applicant may have different codes in different auctions.
-- Validate every bid on the server. A bid must exceed the current highest accepted bid by at least the configured minimum increment.
-- Store accepted bids in the database. Broadcast accepted bids (anonymous code, amount, timestamp), the new highest bid, and remaining time.
-- Use database transactions and row locking (`select_for_update()` on the Auction row) so simultaneous bids cannot conflict.
-- Anti-sniping: a valid bid in the final minute extends the deadline. Extension length is a per-auction field.
-- Reject duplicate submissions and bids on closed auctions.
-- Authorize each WebSocket connection per auction.
+**7. Bidding day**: each quarter has its own slot (default 5 minutes, editable per auction before it starts); several can run at once. Only eligible applicants get an anonymous per-auction code ("Bidder 7") and may bid; anyone may watch. Step = `increment_percent` x base rate (default 0.20 %), whole rupees. Quick bids +1/+2/+5 steps; custom amount >= highest + one step; first bid >= base rate. `transaction.atomic()` + `select_for_update()` on the Auction row; duplicates and out-of-window bids rejected; accepted bids stored and broadcast (code, amount, time, new highest, remaining time); reconnect resyncs. Anti-sniping: per-auction `anti_snipe_seconds`, 0 = off (default).
 
-**Phase 8, Automatic closure**
-- A background process finds auctions past their deadline and closes them atomically.
-- Closure must be idempotent: multiple workers must never award the same quarter twice.
-- Determine the highest valid bid, store the final result and winner, mark the quarter Allotted only when there is a valid winner.
-- Separate outcome for auctions with no valid bids.
+**8. Closing and results**: a background worker closes due auctions atomically and idempotently. Winner = highest valid bid (tie: earliest). If that bidder already holds `MAX_QUARTERS_PER_APPLICANT` (2) allotted quarters or is no longer eligible, the next-highest eligible bidder wins; if none: CLOSED_NO_VALID_WINNER. Outcomes: CLOSED_WON, CLOSED_NO_BIDS, CLOSED_NO_VALID_WINNER. The result (winning code, amount, total bids) is published on the same auction page. Winner email once (`winner_email_sent_at`); loser emails off by default.
 
-**Phase 9, Winner notification**
-Email the winner: congratulations, quarter number, sector/location, floor, area, winning amount, next steps. Loser notifications are optional and off by default.
+Online/QR/mock payment is dropped: EMD is paid offline through SBI Collect and verified by the officer. Refunds are out of scope.
 
 ## 5. Anonymity and privacy
-- Bidder identity must NEVER appear on public auction pages, bid history, ordinary admin screens, or in WebSocket messages (no name, email, URN, mobile, password, or other private data).
+- Bidder identity must NEVER appear on public auction pages, bid history, ordinary admin screens, or in WebSocket messages (no name, email, phone, URN, Aadhaar, PAN, password, or other private data).
+- Aadhaar and PAN: encrypted at rest (Fernet, keys in `.env`), keyed hash for uniqueness, masked display (last 4), never logged or emailed, full value only via the audited "reveal" action (Verification Officer).
 - The database keeps an internal Applicant-to-anonymous-code mapping so eligibility can be checked, bids audited, disputes resolved, and the real winner notified.
 - Do not claim identities are cryptographically anonymous or absent from the database.
 
@@ -82,59 +59,45 @@ Database: start on SQLite for early milestones ONLY. PostgreSQL is required befo
 
 ## 7. Project structure
 ```
-sail_auction/
-├── manage.py
-├── requirements.txt
-├── .env              (secrets, not committed)
-├── .gitignore
-├── CLAUDE.md
-├── PROGRESS.md
-├── sample_data/
-├── config/           (settings, urls, asgi)
-├── accounts/         (applicants, registration, activation)
-└── auctions/         (quarters, auctions, participation, bids)
+AUCTION/
+├── manage.py, requirements.txt, .env (not committed), .env.example
+├── CLAUDE.md, PROGRESS.md, README.md
+├── docs/            (architecture, demo script, deployment, how-to-change, change requests)
+├── sample_data/     (FAKE Excel files + make_samples.py + README.md)
+├── scripts/         (PowerShell helpers: PostgreSQL, server, worker, email)
+├── config/          (settings, urls, asgi, email helpers)
+├── templates/       (base layout, home page, content/ = rules + FAQ text)
+├── accounts/        (custom User with email login, sign-up OTP, login, password reset)
+├── applications/    (Register for bidding, Aadhaar/PAN, URN, PDFs, verification, roles, audit log, eligibility)
+└── auctions/        (quarters, Excel import, auctions, bidding, WebSockets, closure, result emails)
 ```
-**Current state: nothing is built yet. Fresh start.** Create the project with `django-admin startproject config .` and the two apps `accounts` and `auctions`. Set `TIME_ZONE = "Asia/Kolkata"` and `USE_TZ = True`.
+**Current state:** all features of Change Request #3 are built (see PROGRESS.md). `TIME_ZONE = "Asia/Kolkata"`, `USE_TZ = True`, `AUTH_USER_MODEL = "accounts.User"`.
 
 ## 8. Data models
-- **Quarter**: `quarter_no` (CharField, UNIQUE, alphanumeric like "B-214"), `sector`, `location_block`, `quarter_type` (A/B/C/D), `floor` (text: Ground, 1st, 2nd...), `area_sqft` (Decimal), `base_rate` (Decimal), `status` (Vacant / In Auction / Allotted).
-- **Applicant**: name, father's name, mobile, email, address, state, PIN, application number/date, URN (unique 7-digit), URN date, `is_verified` (manual admin flag), `is_activated`, and a nullable `OneToOneField` to Django's `User`. The User is created only at activation with username = URN, so the password is stored in one place only.
-- **Auction**: link to Quarter, start_time, end_time, status, min_increment, anti_snipe_extension, current_highest_bid, final result and winner fields.
-- **Participation**: Applicant + Auction + anonymous_code. UniqueConstraint on (applicant, auction) and on (auction, anonymous_code).
-- **Bid**: auction, participation, amount, timestamp, acceptance/audit information.
+- **User** (accounts): custom, email is the login (`USERNAME_FIELD = "email"`, unique case-insensitively), `full_name`, `phone` (not verified), `email_verified_at`.
+- **EmailOTP** (accounts): email, purpose, `code_hash` (keyed hash, never the code), `expires_at`, `failed_attempts`, `used_at`.
+- **Applicant** (applications): OneToOne User; name, father's name, address, state, PIN; Aadhaar/PAN as `*_encrypted` + `*_index` (unique keyed hash) + `*_last4`; application no./date; URN (unique 7 digits)/date; `documents_emailed_at`; `status` (REGISTERED, DOCUMENTS_PENDING, ACTIVE, REJECTED, SUSPENDED) + reason/when/by.
+- **QuarterApplication** (applications): applicant + quarter (unique together), `emd_amount` (copied), slip emailed; EMD receipt no., amount paid, payment date, `emd_verified`, verified by/at (DB check: verified => complete and amount >= EMD).
+- **DocumentChecklistItem / DocumentCheck** (applications): admin-editable checklist; one tick per applicant per item with who/when.
+- **AuditLog** (applications): actor, action, applicant, summary, details (never a full Aadhaar/PAN).
+- **Quarter** (auctions): `quarter_no` (unique, case-insensitive), sector, location/block, type A-D, floor, area, base rate, `emd_amount`, status (Vacant / In Auction / Allotted).
+- **Auction** (auctions): quarter, `start_time`, `duration_minutes`, `end_time` (= start + duration, extended by anti-sniping), `original_end_time`, status (SCHEDULED, CLOSED_WON, CLOSED_NO_BIDS, CLOSED_NO_VALID_WINNER, CANCELLED), `increment_percent`, `anti_snipe_seconds`, `extensions_count`, `current_highest_bid`, `winning_bid`, `closed_at`, `total_bids`, `winner_email_sent_at`.
+- **Participation** (auctions): applicant + auction + `bidder_number` ("Bidder N"); unique (applicant, auction) and (auction, number). Only for eligible applicants.
+- **Bid** (auctions): auction, participation, amount (whole rupees), time, `client_bid_id` (duplicate protection), previous highest, deadline extension (audit).
 
-Use DecimalField for money, proper foreign keys, uniqueness constraints, indexes, and sensible `on_delete` rules. Explain any extra model you introduce.
+Money is DecimalField; constraints, indexes and PROTECT foreign keys as described in `docs/ARCHITECTURE.md`.
 
 ## 9. Excel import
-Expected columns, in this exact order and spelling:
-`Quarter No | Sector | Location / Block | Type | Floor | Area (sq ft) | Base Rate (Rs.) | Status`
+Columns, in this exact order and spelling (row 1 = headers):
+`Quarter No | Sector | Location / Block | Type | Floor | Area (sq ft) | Base Rate (Rs.) | EMD Amount (Rs.) | Bidding Date | Start Time | Duration (min)`
 
 Rules:
-- Quarter No is unique and stored as text. Sector, Location/Block, Type, Floor are text. Area and Base Rate are positive numbers. Status is "Vacant" on import.
-- Validate the header row and every data row. Report ALL errors with row numbers and column names, not just the first.
-- Reject duplicates inside the file and against the database.
-- Import atomically (all or nothing) inside `transaction.atomic()`, unless I choose otherwise.
-- Handle blank rows, extra whitespace, and numbers with thousands separators (e.g. "4,500") sensibly.
+- Each valid row creates a Quarter and its Auction (SCHEDULED). End = start + duration; blank duration = `DEFAULT_AUCTION_DURATION_MINUTES` (5).
+- Quarter No unique text; Area, Base Rate, EMD positive numbers ("4,500" accepted); date and time read in Asia/Kolkata from real Excel date/time cells or text (DD-MM-YYYY, HH:MM, 2:15 PM...); start must be in the future; duration a whole number 1-1440.
+- Report ALL errors with row numbers and column names. Reject duplicates inside the file and against the database. All-or-nothing (`transaction.atomic()`). Blank rows and extra whitespace handled.
 
-### Sample data (create these, clearly marked as FAKE test data)
-Using openpyxl, create:
-1. `sample_data/quarters_sample.xlsx` with exactly these 8 valid rows:
-
-| Quarter No | Sector | Location / Block | Type | Floor | Area (sq ft) | Base Rate (Rs.) | Status |
-|---|---|---|---|---|---|---|---|
-| B-214 | Sector 4 | Near market | Type B | 2nd | 750 | 4500 | Vacant |
-| B-118 | Sector 4 | Near market | Type B | Ground | 750 | 4800 | Vacant |
-| C-305 | Sector 2 | Opposite park | Type C | 3rd | 620 | 3600 | Vacant |
-| C-112 | Sector 2 | Opposite park | Type C | 1st | 620 | 3900 | Vacant |
-| D-407 | Sector 9 | Near school | Type D | 4th | 480 | 2400 | Vacant |
-| D-203 | Sector 9 | Near school | Type D | 2nd | 480 | 2700 | Vacant |
-| A-021 | Sector 12 | Main road side | Type A | Ground | 980 | 6200 | Vacant |
-| A-134 | Sector 12 | Main road side | Type A | 1st | 980 | 6000 | Vacant |
-
-2. `sample_data/quarters_invalid.xlsx` with deliberate errors: a duplicate Quarter No, a non-numeric Area, a negative Base Rate, and a missing Quarter No.
-3. `sample_data/quarters_bad_header.xlsx` with a wrong header name.
-
-The sample figures are placeholders, not official SAIL data. Use these files in the import tests and in my manual demonstration.
+### Sample data (FAKE test data, `sample_data/`)
+`python sample_data/make_samples.py` writes four files with the bidding date one week ahead (the importer refuses past starts): `quarters_sample.xlsx` (8 valid rows: B-214, B-118, C-305, C-112, D-407, D-203, A-021, A-134; base rates in tens of thousands), `quarters_invalid.xlsx` (9 deliberate errors), `quarters_bad_header.xlsx`, `quarters_edge_cases.xlsx` (valid but awkward: text dates/times, separators, spaces, blank duration, blank row). See `sample_data/README.md`. The tests build the same workbooks in memory.
 
 ## 10. Critical engineering requirements
 - Server-side validation for every bid.
@@ -151,36 +114,43 @@ The sample figures are placeholders, not official SAIL data. Use these files in 
 
 Before introducing database locking, Channels groups, WebSocket consumers, transaction boundaries, and background jobs, explain each with a simple example first.
 
-## 11. Milestones (proposed, not completed)
-1. **Foundation** (CURRENT): project and apps, settings, `.env`, Quarter + Applicant models with constraints, admin registration, sample Excel files, Excel import (admin upload) with validation and tests.
-2. Applicant registration form, URN generation, PDF generation (form + slip with QR), email sending.
-3. Activation, login/logout, password reset, auction creation, lobby.
-4. Switch to PostgreSQL, Channels, Daphne, Redis, consumers, anonymous codes, bid validation with locking, live updates, countdown, anti-sniping.
-5. Automatic closure, winner selection and email, bid history, concurrent-auction tests, documentation, demo.
+## 11. Milestones (Change Request #3) - all complete
+1. Foundation: custom user model, Quarter + Auction models, Excel import (new columns), admin, sample files, tests.
+2. Public site (home, rules, FAQ), email-OTP sign-up, login/logout, password reset, quarter listing.
+3. Register for bidding, Aadhaar/PAN safeguards, URN, Application Form + Intimation Slip PDFs, email.
+4. Admin verification: checklist, per-quarter EMD, activation, audit log, roles, eligibility.
+5. Auction room on PostgreSQL/Channels/Daphne: anonymous codes, percentage/custom/quick bidding with locking, live updates, timer.
+6. Automatic closure, 2-quarter cap, result on the auction page, winner email, concurrency tests, documentation, demo.
 
-Target pace is about four weeks; treat it as a proposal.
+Before CR #3 the original five milestones were completed (git history up to commit 3e68a94).
 
 ## 12. Open questions (keep unresolved; use labeled placeholders)
+From the original plan:
 1. Who generates the URN? (placeholder: system, 7 digits)
-2. Official EMD amount and SBI Collect process? (placeholder: configurable setting)
-3. How is eligibility verified? (placeholder: admin `is_verified` flag)
-4. Minimum bid increment? (placeholder: per-auction field)
-5. Anti-sniping extension length? (placeholder: per-auction field, e.g. 2 minutes)
-6. Ties or equal bids? (placeholder: earliest accepted bid wins)
-7. No valid bids? (placeholder: status CLOSED_NO_BIDS, quarter stays Vacant)
-8. Winning bidder becomes ineligible? (out of scope; keep audit data)
-9. Notify losing bidders? (placeholder: off by default)
-10. Official auction, allotment, and record-retention rules? (ask my mentor)
-11. Approved database and deployment environment? (PostgreSQL preferred; ask my mentor)
-12. What does "Base Rate" mean: total price, monthly rent, or per sq ft? (affects field labels and increment sizing)
+2. SBI Collect payee details? (placeholder: `SBI_COLLECT_PAYEE` setting, "DEMO")
+3. Ties? (placeholder: earliest accepted bid wins; amounts are unique per auction anyway)
+4. Official auction, allotment and record-retention rules? (ask mentor)
+5. What does "Base Rate" mean: total, monthly rent, or per sq ft? (affects labels)
+6. Step rounding: 0.2 % of the base rate is rounded to the nearest rupee, minimum Rs. 1 (user: base rates are in tens of thousands, so this rarely matters).
+
+From Change Request #3:
+7. Is storing the full Aadhaar number permitted? (placeholder: encrypted + masked, pending mentor/legal approval; alternative: last 4 + verified flag) - MUST be confirmed before real use.
+8. Ranked choices or multi-select? (placeholder: unranked multi-select)
+9. First bid = base rate or base + one step? (placeholder: >= base rate)
+10. Adding quarters later, and until when? (placeholder: allowed until `APPLICATION_CLOSES_HOURS_BEFORE_AUCTION` = 24 h before that quarter's slot; supplementary slip)
+11. Custom bid a multiple of the step? (placeholder: any whole-rupee amount >= highest + one step)
+12. Anti-sniping on 5-minute auctions? (placeholder: off; recommendation if wanted: 30 s, max 5 extensions)
+13. Capped top bidder: next-highest or vacant? (placeholder: next-highest eligible bidder, at their own highest bid)
+14. Exact document checklist and official wording (rules, FAQ, declaration)? (placeholder: CR #3 list, editable)
+15. Phone verification by SMS later? (placeholder: not verified)
+16. Quarter information public before login? (placeholder: yes)
+17. Deployment, database, retention, refunds? (placeholder: PostgreSQL; refunds out of scope)
+Also: paying MORE than the EMD is accepted as verified (assumption); "you cannot outbid yourself" kept from earlier milestones (assumption).
 
 If one of these blocks a design decision, ASK me instead of guessing.
 
 ## 13. Final deliverable
-A working Django app demonstrating: Excel quarter import, applicant registration, PDF generation and email, URN-based activation, authentication and password reset, auction creation and lobby, multiple simultaneous auctions, anonymous real-time bidding, correct concurrent-bid handling, automatic closure and winner selection, winner notification, bid history and auditability, automated tests, and project documentation (report, architecture diagram, ER diagram, workflow diagram, demo script).
+A working Django app demonstrating: public site with rules/FAQ, email-OTP sign-up and email login, password reset, register for bidding (Aadhaar/PAN safeguards), PDF generation and email, offline verification with audit log, Excel import of quarters and slots, multiple simultaneous auctions, anonymous real-time bidding, correct concurrent-bid handling, automatic closure and winner selection, winner notification, bid history and auditability, automated tests, and project documentation (report, architecture diagram, ER diagram, workflow diagram, demo script).
 
-## 14. First task
-1. Read this file and summarize your understanding in a few lines.
-2. Confirm the Milestone 1 plan.
-3. Ask me for what you need: my operating system, my Python version (`python --version`), and whether PostgreSQL is installed.
-4. Do not write code until I confirm.
+## 14. Next session
+Read PROGRESS.md first. All CR #3 features are built and tested; remaining work is whatever the mentor answers to the open questions in section 12.

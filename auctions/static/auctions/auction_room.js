@@ -3,7 +3,9 @@
  *
  * - Opens a WebSocket to /ws/auctions/<id>/ and keeps it open.
  * - Draws every update the server sends (snapshot, bid_accepted, state).
- * - Sends bids as {"type": "bid", "amount": "...", "client_bid_id": "<uuid>"}.
+ * - Sends bids as {"type": "bid", "amount": "...", "client_bid_id": "<uuid>"}, from the
+ *   typed amount or from a quick-bid button (+1 / +2 / +5 steps over the highest bid).
+ * - Anyone may watch; only an eligible bidder's page has the bid panel.
  * - Reconnects automatically after a network drop (1s, 2s, 4s ... max 15s) and
  *   resyncs; the server sends a fresh snapshot on every connect.
  * - Asks for a resync when the tab becomes visible again (laptop woke up, etc.).
@@ -19,8 +21,7 @@
   var state = JSON.parse(document.getElementById("initial-state").textContent);
 
   // Close codes from auctions/consumers.py: these mean "don't retry".
-  var FATAL_CLOSE = { 4401: "Please log in again.", 4403: "You are not a participant in this auction.",
-                      4404: "Auction not found." };
+  var FATAL_CLOSE = { 4404: "Auction not found." };
 
   var el = function (id) { return document.getElementById(id); };
   var ui = {
@@ -28,7 +29,7 @@
     highest: el("highest"), minimum: el("minimum"), deadline: el("deadline"),
     extended: el("extended-note"), connection: el("connection"), bids: el("bids"),
     form: el("bid-form"), amount: el("bid-amount"), button: el("bid-button"),
-    minButton: el("bid-min"), message: el("bid-message"), result: el("result"),
+    quickBids: el("quick-bids"), totalBids: el("total-bids"), message: el("bid-message"), result: el("result"),
     bidPanel: el("bid-panel"), biddingClosed: el("bidding-closed"), minimumBlock: el("minimum-block")
   };
 
@@ -47,9 +48,14 @@
 
   // ---------------------------------------------------------------- helpers
 
+  function amountText(value) {
+    // "45090" -> "45,090" (Indian grouping); paise shown only if there are any.
+    return Number(value).toLocaleString("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+  }
+
   function rupees(value) {
     if (value === null || value === undefined) { return "No bids yet"; }
-    return "Rs. " + Number(value).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return "Rs. " + amountText(value);
   }
 
   function timeOnly(iso) {
@@ -78,7 +84,21 @@
   function refreshControls() {
     if (!ui.button) { return; }
     ui.button.disabled = !canBid();
-    ui.minButton.disabled = !canBid();
+    if (ui.quickBids) {
+      ui.quickBids.querySelectorAll("button").forEach(function (b) { b.disabled = !canBid(); });
+    }
+  }
+
+  function drawQuickBids() {
+    // Button labels follow the live highest bid: "+2 steps: Rs. 45,180".
+    if (!ui.quickBids || !state.quick_bids) { return; }
+    state.quick_bids.forEach(function (q) {
+      var button = ui.quickBids.querySelector('[data-steps="' + q.steps + '"]');
+      if (button) {
+        button.textContent = "+" + q.steps + " step" + (q.steps === 1 ? "" : "s") + ": " + rupees(q.amount);
+        button.dataset.amount = q.amount;
+      }
+    });
   }
 
   // ---------------------------------------------------------------- drawing
@@ -93,6 +113,8 @@
     ui.highest.textContent = rupees(state.highest_bid);
     ui.minimum.textContent = rupees(state.minimum_next_bid);
     ui.deadline.textContent = new Date(state.end_time).toLocaleString("en-GB", DEADLINE_FORMAT);
+    if (ui.totalBids && state.total_bids !== undefined) { ui.totalBids.textContent = state.total_bids; }
+    drawQuickBids();
     if (previousDeadline && state.end_time !== previousDeadline && s.extended) {
       ui.extended.hidden = false;
     }
@@ -113,13 +135,16 @@
     var title, text;
     if (result.outcome === "won" && result.bidder === state.you) {
       title = "Congratulations, you won!";
-      text = "Your bid of " + rupees(result.amount) + " was the highest. Details have been emailed to you.";
+      text = "Your bid of " + rupees(result.amount) + " won this quarter. Details have been emailed to you.";
     } else if (result.outcome === "won") {
       title = "Auction closed";
       text = "Won by " + result.bidder + " with " + rupees(result.amount) + ".";
     } else if (result.outcome === "no_bids") {
       title = "Auction closed";
-      text = "No valid bids were placed. The quarter remains vacant.";
+      text = "No bids were placed. The quarter remains vacant.";
+    } else if (result.outcome === "no_valid_winner") {
+      title = "Auction closed";
+      text = "No valid winner: no bidder could be allotted this quarter. The quarter remains vacant.";
     } else {
       title = "Auction cancelled";
       text = "This auction was cancelled by the auction office.";
@@ -131,6 +156,12 @@
     p.textContent = text;
     ui.result.appendChild(h);
     ui.result.appendChild(p);
+    if (result.total_bids) {
+      var count = document.createElement("p");
+      count.className = "muted";
+      count.textContent = "Total bids: " + result.total_bids;
+      ui.result.appendChild(count);
+    }
     ui.result.hidden = false;
     if (ui.message && result.outcome !== "won") { ui.message.textContent = ""; }
   }
@@ -143,7 +174,7 @@
     var minimum = Number(state.minimum_next_bid);
     var untouched = ui.amount.value === lastSuggested || ui.amount.value === "";
     if (untouched || isNaN(typed) || typed < minimum) {
-      lastSuggested = minimum.toFixed(2);
+      lastSuggested = minimum.toFixed(0);
       ui.amount.value = lastSuggested;
     }
   }
@@ -161,7 +192,7 @@
     if (empty) { empty.remove(); }
     var row = document.createElement("tr");
     [timeOnly(bid.time), bid.bidder + (bid.bidder === state.you ? " (you)" : ""),
-     Number(bid.amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })].forEach(function (text, i) {
+     amountText(bid.amount)].forEach(function (text, i) {
       var cell = document.createElement("td");
       cell.textContent = text;      // textContent, never innerHTML: no script injection
       if (i === 2) { cell.className = "num"; }
@@ -284,32 +315,36 @@
 
   // ---------------------------------------------------------------- bidding
 
+  function sendBid(amount) {
+    if (!canBid()) { return; }
+    pendingBidId = newBidId();
+    var sent = send({ type: "bid", amount: amount, client_bid_id: pendingBidId });
+    if (!sent) {
+      pendingBidId = null;
+      setMessage("Not connected. Your bid was not sent.", false);
+      return;
+    }
+    setMessage("Sending bid…", true);
+    refreshControls();
+    // If no answer arrives (connection dropped), unlock the button and resync.
+    pendingTimer = setTimeout(function () {
+      pendingBidId = null;
+      setMessage("No reply from the server. Check the bid history before bidding again.", false);
+      send({ type: "sync" });
+      refreshControls();
+    }, 10000);
+  }
+
   if (ui.form) {
     ui.form.addEventListener("submit", function (event) {
       event.preventDefault();
-      if (!canBid()) { return; }
-      pendingBidId = newBidId();
-      var sent = send({ type: "bid", amount: ui.amount.value, client_bid_id: pendingBidId });
-      if (!sent) {
-        pendingBidId = null;
-        setMessage("Not connected. Your bid was not sent.", false);
-        return;
-      }
-      setMessage("Sending bid…", true);
-      refreshControls();
-      // If no answer arrives (connection dropped), unlock the button and resync.
-      pendingTimer = setTimeout(function () {
-        pendingBidId = null;
-        setMessage("No reply from the server. Check the bid history before bidding again.", false);
-        send({ type: "sync" });
-        refreshControls();
-      }, 10000);
+      sendBid(ui.amount.value);
     });
-
-    ui.minButton.addEventListener("click", function () {
-      lastSuggested = Number(state.minimum_next_bid).toFixed(2);
-      ui.amount.value = lastSuggested;
-      ui.amount.focus();
+    // Quick bids send the amount shown on the button. If someone outbids in the
+    // meantime, the server rejects it as too low and the buttons update.
+    ui.quickBids.addEventListener("click", function (event) {
+      var button = event.target.closest("button[data-amount]");
+      if (button) { sendBid(button.dataset.amount); }
     });
   }
 

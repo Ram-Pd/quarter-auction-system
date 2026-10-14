@@ -1,11 +1,30 @@
-from datetime import timedelta
-from decimal import Decimal
+"""
+Quarters, their auctions, participation codes and bids.
 
+    Quarter        - a residential quarter (from the Excel import)
+    Auction        - the bidding slot for ONE quarter (also from the Excel import)
+    Participation  - an eligible applicant's anonymous "Bidder N" code in one auction
+    Bid            - an accepted bid (audit trail; never edited or deleted)
+"""
+from datetime import timedelta
+from decimal import ROUND_CEILING, ROUND_HALF_UP, Decimal
+
+from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models, transaction
 from django.db.models import Q
 from django.db.models.functions import Upper
 from django.utils import timezone
+
+ONE_RUPEE = Decimal("1")
+
+
+def default_duration_minutes():
+    return settings.DEFAULT_AUCTION_DURATION_MINUTES
+
+
+def default_increment_percent():
+    return settings.DEFAULT_INCREMENT_PERCENT
 
 
 class Quarter(models.Model):
@@ -23,52 +42,36 @@ class Quarter(models.Model):
         IN_AUCTION = "IN_AUCTION", "In Auction"
         ALLOTTED = "ALLOTTED", "Allotted"
 
-    quarter_no = models.CharField(
-        "quarter no",
-        max_length=20,
-        unique=True,
-        help_text='Alphanumeric, e.g. "B-214". Stored in upper case.',
-    )
+    quarter_no = models.CharField("quarter no", max_length=20, unique=True,
+                                  help_text='Alphanumeric, e.g. "B-214". Stored in upper case.')
     sector = models.CharField(max_length=100)
     location_block = models.CharField("location / block", max_length=150)
     quarter_type = models.CharField("type", max_length=1, choices=QuarterType.choices)
     floor = models.CharField(max_length=20, help_text="Text, e.g. Ground, 1st, 2nd.")
     area_sqft = models.DecimalField("area (sq ft)", max_digits=8, decimal_places=2)
     base_rate = models.DecimalField(
-        "base rate (Rs.)",
-        max_digits=12,
-        decimal_places=2,
-        # ASSUMPTION (open question 12): unit not yet confirmed by SAIL.
-        help_text="Placeholder: unit (total / monthly rent / per sq ft) not yet confirmed.",
-    )
-    status = models.CharField(
-        max_length=12,
-        choices=Status.choices,
-        default=Status.VACANT,
-        db_index=True,  # the lobby and admin filter by status often
-    )
+        "base rate (Rs.)", max_digits=12, decimal_places=2,
+        # ASSUMPTION (CLAUDE.md open question 12): unit not yet confirmed.
+        help_text="Placeholder: unit (total / monthly rent / per sq ft) not yet confirmed.")
+    emd_amount = models.DecimalField(
+        "EMD amount (Rs.)", max_digits=12, decimal_places=2,
+        help_text="Earnest money deposit for THIS quarter, paid offline through SBI Collect.")
+    status = models.CharField(max_length=12, choices=Status.choices, default=Status.VACANT, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         ordering = ["quarter_no"]
         constraints = [
-            models.CheckConstraint(
-                condition=Q(area_sqft__gt=0),
-                name="quarter_area_positive",
-                violation_error_message="Area must be greater than 0.",
-            ),
-            models.CheckConstraint(
-                condition=Q(base_rate__gt=0),
-                name="quarter_base_rate_positive",
-                violation_error_message="Base rate must be greater than 0.",
-            ),
+            models.CheckConstraint(condition=Q(area_sqft__gt=0), name="quarter_area_positive",
+                                   violation_error_message="Area must be greater than 0."),
+            models.CheckConstraint(condition=Q(base_rate__gt=0), name="quarter_base_rate_positive",
+                                   violation_error_message="Base rate must be greater than 0."),
+            models.CheckConstraint(condition=Q(emd_amount__gt=0), name="quarter_emd_positive",
+                                   violation_error_message="EMD amount must be greater than 0."),
             # "b-214" and "B-214" must count as the same quarter.
-            models.UniqueConstraint(
-                Upper("quarter_no"),
-                name="quarter_no_unique_ci",
-                violation_error_message="A quarter with this number already exists.",
-            ),
+            models.UniqueConstraint(Upper("quarter_no"), name="quarter_no_unique_ci",
+                                    violation_error_message="A quarter with this number already exists."),
         ]
 
     def save(self, *args, **kwargs):
@@ -76,70 +79,74 @@ class Quarter(models.Model):
         self.quarter_no = self.quarter_no.strip().upper()
         super().save(*args, **kwargs)
 
+    @property
+    def locality(self):
+        """'Locality details' on the public pages = sector + location / block."""
+        return f"{self.sector}, {self.location_block}"
+
     def __str__(self):
         return self.quarter_no
 
 
 class Auction(models.Model):
     """
-    One auction of one quarter. Several auctions can run at the same time.
+    The bidding slot of ONE quarter. Several auctions can run at the same time.
 
-    `status` stores only what the clock cannot tell us (open / closed / cancelled).
-    Whether an OPEN auction is upcoming, live or awaiting closure is worked out
-    from start_time / end_time; see `phase()`.
+    `status` stores only what the clock cannot tell us (scheduled / closed with
+    which outcome / cancelled). Whether a SCHEDULED auction is upcoming, live or
+    waiting for closure is worked out from start_time / end_time: see phase().
     """
 
     class Status(models.TextChoices):
-        OPEN = "OPEN", "Open"                                # scheduled or running
-        CLOSED = "CLOSED", "Closed - won"                    # set by the closure job (Milestone 5)
-        CLOSED_NO_BIDS = "CLOSED_NO_BIDS", "Closed - no bids"  # open question 7 placeholder
+        SCHEDULED = "SCHEDULED", "Scheduled"                         # upcoming or running
+        CLOSED_WON = "CLOSED_WON", "Closed - won"
+        CLOSED_NO_BIDS = "CLOSED_NO_BIDS", "Closed - no bids"
+        CLOSED_NO_VALID_WINNER = "CLOSED_NO_VALID_WINNER", "Closed - no valid winner"
         CANCELLED = "CANCELLED", "Cancelled"
 
+    CLOSED_STATUSES = (Status.CLOSED_WON, Status.CLOSED_NO_BIDS, Status.CLOSED_NO_VALID_WINNER)
+
     class Phase(models.TextChoices):
-        """Computed, never stored. Used by the lobby and (later) the bidding page."""
+        """Computed, never stored."""
         UPCOMING = "UPCOMING", "Upcoming"
         LIVE = "LIVE", "Live"
-        CLOSING = "CLOSING", "Closing"  # deadline passed, closure job not run yet
+        CLOSING = "CLOSING", "Closing"  # deadline passed, closure not run yet
         CLOSED = "CLOSED", "Closed"
         CANCELLED = "CANCELLED", "Cancelled"
 
-    quarter = models.ForeignKey(
-        Quarter,
-        on_delete=models.PROTECT,  # a quarter with auction history can't be deleted
-        related_name="auctions",
-    )
+    quarter = models.ForeignKey(Quarter, on_delete=models.PROTECT, related_name="auctions")
     start_time = models.DateTimeField()
+    duration_minutes = models.PositiveIntegerField(
+        "duration (minutes)", default=default_duration_minutes,
+        help_text="Length of the bidding window. Editable until the auction starts.")
     end_time = models.DateTimeField(
-        help_text="Current deadline. Anti-sniping may push it later.",
-    )
+        editable=False,
+        help_text="Current deadline = start + duration, pushed later by anti-sniping if it is on.")
     original_end_time = models.DateTimeField(
-        null=True, editable=False,
-        help_text="The scheduled deadline, before any anti-snipe extensions (audit).",
-    )
-    status = models.CharField(max_length=16, choices=Status.choices, default=Status.OPEN,
-                              db_index=True)
-    # ASSUMPTION (open question 4): per-auction value, default is a placeholder.
-    min_increment = models.DecimalField(
-        "minimum increment (Rs.)", max_digits=12, decimal_places=2, default=Decimal("100.00"),
-        help_text="Each new bid must beat the current highest bid by at least this much.",
-    )
-    # ASSUMPTION (open question 5): per-auction value, default is a placeholder.
-    anti_snipe_extension = models.DurationField(
-        default=timedelta(minutes=2),
-        help_text="How much a bid in the final minute extends the deadline (HH:MM:SS).",
-    )
+        null=True, editable=False, help_text="The scheduled deadline, before any anti-snipe extensions.")
+    status = models.CharField(max_length=24, choices=Status.choices, default=Status.SCHEDULED, db_index=True)
+    # ASSUMPTION (CLAUDE.md open question 4): step = increment_percent % of the base rate.
+    increment_percent = models.DecimalField(
+        "increment (% of base rate)", max_digits=5, decimal_places=2, default=default_increment_percent,
+        help_text="Bid step as a percentage of the base rate, e.g. 0.20 means 0.2%.")
+    # CR #3 open question 6: off (0) by default.
+    anti_snipe_seconds = models.PositiveIntegerField(
+        "anti-snipe seconds", default=0,
+        help_text="0 = off. Otherwise a bid in the last N seconds moves the deadline to now + N seconds "
+                  "(at most AUCTION_MAX_EXTENSIONS times).")
+    extensions_count = models.PositiveIntegerField(default=0, editable=False)
     current_highest_bid = models.DecimalField(
         max_digits=12, decimal_places=2, null=True, blank=True, editable=False,
-        help_text="Kept up to date by the bidding code (auctions/bidding.py).",
-    )
+        help_text="Kept up to date by the bidding code (auctions/bidding.py).")
+
     # --- Final result, written once by auctions/closing.py ---
     winning_bid = models.OneToOneField(
-        "Bid", on_delete=models.PROTECT, null=True, blank=True, editable=False,
-        related_name="won_auction",
-        help_text="The highest valid bid when the auction closed. Empty if there were no bids.",
-    )
+        "Bid", on_delete=models.PROTECT, null=True, blank=True, editable=False, related_name="won_auction",
+        help_text="The winning bid. Empty unless the auction closed with a valid winner.")
     closed_at = models.DateTimeField(null=True, blank=True, editable=False)
-    winner_notified_at = models.DateTimeField(
+    total_bids = models.PositiveIntegerField(default=0, editable=False,
+                                             help_text="Number of accepted bids (published with the result).")
+    winner_email_sent_at = models.DateTimeField(
         null=True, blank=True, editable=False,
         help_text="When the winner email was sent. Set once; prevents duplicate emails.")
     losers_notified_at = models.DateTimeField(null=True, blank=True, editable=False)
@@ -149,45 +156,30 @@ class Auction(models.Model):
     class Meta:
         ordering = ["start_time"]
         indexes = [
-            # The closure job (auctions/closing.py) looks for OPEN auctions past end_time.
+            # The closure job (auctions/closing.py) looks for SCHEDULED auctions past end_time.
             models.Index(fields=["status", "end_time"], name="auction_status_end_idx"),
         ]
         constraints = [
-            models.CheckConstraint(
-                condition=Q(end_time__gt=models.F("start_time")),
-                name="auction_end_after_start",
-                violation_error_message="End time must be after start time.",
-            ),
-            models.CheckConstraint(
-                condition=Q(min_increment__gt=0),
-                name="auction_min_increment_positive",
-                violation_error_message="Minimum increment must be greater than 0.",
-            ),
-            models.CheckConstraint(
-                condition=Q(anti_snipe_extension__gte=timedelta(0)),
-                name="auction_extension_not_negative",
-                violation_error_message="Anti-snipe extension cannot be negative.",
-            ),
-            models.UniqueConstraint(
-                fields=["quarter"],
-                condition=Q(status="OPEN"),
-                name="one_open_auction_per_quarter",
-                violation_error_message="This quarter already has an open auction.",
-            ),
+            models.CheckConstraint(condition=Q(end_time__gt=models.F("start_time")),
+                                   name="auction_end_after_start",
+                                   violation_error_message="End time must be after start time."),
+            models.CheckConstraint(condition=Q(duration_minutes__gt=0), name="auction_duration_positive",
+                                   violation_error_message="Duration must be at least 1 minute."),
+            models.CheckConstraint(condition=Q(increment_percent__gt=0), name="auction_increment_positive",
+                                   violation_error_message="Increment percent must be greater than 0."),
+            models.UniqueConstraint(fields=["quarter"], condition=Q(status="SCHEDULED"),
+                                    name="one_scheduled_auction_per_quarter",
+                                    violation_error_message="This quarter already has a scheduled auction."),
             # Last line of defence: a quarter can be WON only once, ever.
-            models.UniqueConstraint(
-                fields=["quarter"],
-                condition=Q(status="CLOSED"),
-                name="quarter_won_only_once",
-                violation_error_message="This quarter has already been won in another auction.",
-            ),
+            models.UniqueConstraint(fields=["quarter"], condition=Q(status="CLOSED_WON"),
+                                    name="quarter_won_only_once",
+                                    violation_error_message="This quarter has already been won."),
             # "Closed - won" always has a winning bid; every other status has none.
             models.CheckConstraint(
-                condition=(Q(status="CLOSED", winning_bid__isnull=False)
-                           | (~Q(status="CLOSED") & Q(winning_bid__isnull=True))),
+                condition=(Q(status="CLOSED_WON", winning_bid__isnull=False)
+                           | (~Q(status="CLOSED_WON") & Q(winning_bid__isnull=True))),
                 name="winning_bid_matches_status",
-                violation_error_message="Only a closed-won auction has a winning bid.",
-            ),
+                violation_error_message="Only a closed-won auction has a winning bid."),
         ]
 
     def __str__(self):
@@ -198,33 +190,40 @@ class Auction(models.Model):
 
     def clean(self):
         errors = {}
-        if self.quarter_id and self.quarter.status == Quarter.Status.ALLOTTED:
+        if self.quarter_id and self._state.adding and self.quarter.status == Quarter.Status.ALLOTTED:
             errors["quarter"] = "This quarter is already allotted."
-        if self._state.adding and self.end_time and self.end_time <= timezone.now():
-            errors["end_time"] = "End time must be in the future."
+        if self._state.adding and self.start_time and self.start_time <= timezone.now():
+            errors["start_time"] = "Start time must be in the future."
         if errors:
             raise ValidationError(errors)
 
     # ---------- state changes ----------
 
+    def schedule_end(self):
+        """Set the deadline from start + duration. Only meaningful before bidding starts."""
+        self.end_time = self.start_time + timedelta(minutes=self.duration_minutes)
+        self.original_end_time = self.end_time
+
     def save(self, *args, **kwargs):
+        if self.end_time is None:
+            self.schedule_end()
         if self.original_end_time is None:
             self.original_end_time = self.end_time
         with transaction.atomic():
             creating = self._state.adding
             super().save(*args, **kwargs)
-            if creating and self.status == self.Status.OPEN:
+            if creating and self.status == self.Status.SCHEDULED:
                 Quarter.objects.filter(pk=self.quarter_id).update(status=Quarter.Status.IN_AUCTION)
 
     def cancel(self):
-        """Cancel an open auction and free the quarter again. Bids are kept for audit."""
+        """Cancel a scheduled auction and free the quarter again. Bids are kept for audit."""
         from . import realtime  # imported here: realtime.py imports this module
 
         with transaction.atomic():
             # Same lock as bidding, so a bid can't slip in while we cancel.
             locked = Auction.objects.select_for_update().get(pk=self.pk)
-            if locked.status != self.Status.OPEN:
-                raise ValidationError("Only open auctions can be cancelled.")
+            if locked.status != self.Status.SCHEDULED:
+                raise ValidationError("Only scheduled auctions can be cancelled.")
             self.status = self.Status.CANCELLED
             self.save(update_fields=["status", "updated_at"])
             Quarter.objects.filter(pk=self.quarter_id).update(status=Quarter.Status.VACANT)
@@ -236,7 +235,7 @@ class Auction(models.Model):
         now = now or timezone.now()
         if self.status == self.Status.CANCELLED:
             return self.Phase.CANCELLED
-        if self.status != self.Status.OPEN:
+        if self.status != self.Status.SCHEDULED:
             return self.Phase.CLOSED
         if now < self.start_time:
             return self.Phase.UPCOMING
@@ -245,24 +244,42 @@ class Auction(models.Model):
         return self.Phase.CLOSING
 
     @property
-    def winner_participation(self):
-        """The winning Participation (who won, internally), or None."""
-        return self.winning_bid.participation if self.winning_bid_id else None
+    def is_closed(self):
+        return self.status in self.CLOSED_STATUSES
+
+    @property
+    def bid_step(self):
+        """
+        One bid step in whole rupees = increment_percent % of the base rate,
+        rounded to the nearest rupee (ASSUMPTION), never less than Rs. 1.
+        Example: 0.20 % of 45,000 = Rs. 90.
+        """
+        step = (self.quarter.base_rate * self.increment_percent / 100).quantize(ONE_RUPEE, ROUND_HALF_UP)
+        return max(step, ONE_RUPEE)
 
     @property
     def minimum_next_bid(self):
         """
         Lowest acceptable next bid.
-        ASSUMPTION: the first bid must be at least the quarter's base rate.
+        ASSUMPTION (CR #3 open question 3): the first bid must be at least the base rate.
         """
         if self.current_highest_bid is None:
-            return self.quarter.base_rate
-        return self.current_highest_bid + self.min_increment
+            return self.quarter.base_rate.quantize(ONE_RUPEE, ROUND_CEILING)
+        return self.current_highest_bid + self.bid_step
+
+    def quick_bid_amounts(self):
+        """The "+1 / +2 / +5 steps" buttons: n steps over the current highest bid."""
+        return [(n, self.minimum_next_bid + (n - 1) * self.bid_step) for n in settings.QUICK_BID_STEPS]
+
+    @property
+    def winner_participation(self):
+        """The winning Participation (who won, internally), or None."""
+        return self.winning_bid.participation if self.winning_bid_id else None
 
 
 class Participation(models.Model):
     """
-    An applicant taking part in one auction, under an anonymous per-auction code.
+    An eligible applicant taking part in one auction, under an anonymous per-auction code.
 
     PRIVACY: this table is the ONLY link between a real applicant and their
     "Bidder N" code. Public pages, bid history and WebSocket messages show
@@ -270,10 +287,10 @@ class Participation(models.Model):
     resolved and the real winner notified.
     """
 
-    applicant = models.ForeignKey("accounts.Applicant", on_delete=models.PROTECT,
+    applicant = models.ForeignKey("applications.Applicant", on_delete=models.PROTECT,
                                   related_name="participations")
     auction = models.ForeignKey(Auction, on_delete=models.PROTECT, related_name="participations")
-    # Shown as "Bidder 7". Numbered 1, 2, 3... in join order within each auction,
+    # Shown as "Bidder 7". Numbered 1, 2, 3... in joining order within each auction,
     # so the same applicant gets unrelated numbers in different auctions.
     bidder_number = models.PositiveIntegerField()
     joined_at = models.DateTimeField(auto_now_add=True)

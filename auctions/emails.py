@@ -28,7 +28,7 @@ def notify_winner(auction_id):
         auction = (Auction.objects.select_for_update(of=("self",))
                    .select_related("quarter", "winning_bid__participation__applicant")
                    .get(pk=auction_id))
-        if auction.status != Auction.Status.CLOSED or auction.winner_notified_at:
+        if auction.status != Auction.Status.CLOSED_WON or auction.winner_email_sent_at:
             return False
 
         bid = auction.winning_bid
@@ -37,8 +37,8 @@ def notify_winner(auction_id):
                     {"applicant": applicant, "quarter": auction.quarter, "bid": bid},
                     to=[applicant.email]).send()
 
-        auction.winner_notified_at = timezone.now()
-        auction.save(update_fields=["winner_notified_at", "updated_at"])
+        auction.winner_email_sent_at = timezone.now()
+        auction.save(update_fields=["winner_email_sent_at", "updated_at"])
     return True
 
 
@@ -52,7 +52,7 @@ def notify_losers(auction_id):
     with transaction.atomic():
         auction = (Auction.objects.select_for_update(of=("self",)).select_related("quarter", "winning_bid")
                    .get(pk=auction_id))
-        if auction.status != Auction.Status.CLOSED or auction.losers_notified_at:
+        if auction.status != Auction.Status.CLOSED_WON or auction.losers_notified_at:
             return 0
 
         winner_participation_id = auction.winning_bid.participation_id

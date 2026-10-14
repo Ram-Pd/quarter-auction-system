@@ -1,52 +1,63 @@
-import logging
+from django.contrib import admin
+from django.contrib.auth.admin import UserAdmin as DjangoUserAdmin
+from django.contrib.auth.forms import AdminUserCreationForm, UserChangeForm
 
-from django.contrib import admin, messages
-
-from .emails import send_registration_documents
-from .models import Applicant
-
-logger = logging.getLogger(__name__)
+from .models import EmailOTP, User
 
 
-@admin.register(Applicant)
-class ApplicantAdmin(admin.ModelAdmin):
+class UserCreationForm(AdminUserCreationForm):
+    class Meta:
+        model = User
+        fields = ("email", "full_name", "phone")
+
+
+class UserEditForm(UserChangeForm):
+    class Meta:
+        model = User
+        fields = "__all__"
+
+
+@admin.register(User)
+class UserAdmin(DjangoUserAdmin):
     """
-    This screen shows personal data. Only give the "accounts | applicant"
-    permissions to staff who are allowed to see applicant identities.
+    Django's user admin, adjusted for email login (there is no username).
+    Staff roles: put a staff user in the "Verification Officer" or
+    "Auction Admin" group (see applications/roles.py).
     """
 
-    list_display = ("application_no", "urn", "name", "mobile", "is_verified", "is_activated",
-                    "documents_emailed_at")
-    list_filter = ("is_verified", "is_activated", "state")
-    search_fields = ("application_no", "urn", "name", "email", "mobile")
-    # System-set fields: never edited by hand.
-    readonly_fields = ("application_no", "documents_emailed_at", "is_activated", "user",
-                       "created_at", "updated_at")
-    actions = ["resend_documents"]
+    form = UserEditForm
+    add_form = UserCreationForm
+    ordering = ("email",)
+    list_display = ("email", "full_name", "is_staff", "is_active", "last_login", "date_joined")
+    list_filter = ("is_staff", "is_superuser", "is_active", "groups")
+    search_fields = ("email", "full_name")
+    readonly_fields = ("email_verified_at", "last_login", "date_joined")
     fieldsets = (
-        ("Applicant details", {
-            "fields": ("name", "father_name", "mobile", "email", "address", "state", "pin_code"),
-        }),
-        ("Application & URN", {
-            "fields": ("application_no", "application_date", "urn", "urn_date",
-                       "documents_emailed_at"),
-        }),
-        ("Status", {
-            "fields": ("is_verified", "is_activated", "user", "created_at", "updated_at"),
-        }),
+        (None, {"fields": ("email", "password")}),
+        ("Personal info", {"fields": ("full_name", "phone", "email_verified_at")}),
+        ("Permissions", {"fields": ("is_active", "is_staff", "is_superuser", "groups", "user_permissions")}),
+        ("Important dates", {"fields": ("last_login", "date_joined")}),
+    )
+    add_fieldsets = (
+        (None, {"classes": ("wide",),
+                "fields": ("email", "full_name", "phone", "usable_password", "password1", "password2")}),
     )
 
-    @admin.action(description="Resend registration documents (Application Form + Intimation Slip)")
-    def resend_documents(self, request, queryset):
-        sent, failed = 0, []
-        for applicant in queryset:
-            try:
-                send_registration_documents(applicant)
-                sent += 1
-            except Exception:
-                logger.exception("Resend failed for %s", applicant.application_no)
-                failed.append(applicant.application_no)
-        if sent:
-            self.message_user(request, f"Documents sent to {sent} applicant(s).", messages.SUCCESS)
-        if failed:
-            self.message_user(request, f"Sending failed for: {', '.join(failed)}", messages.ERROR)
+
+@admin.register(EmailOTP)
+class EmailOTPAdmin(admin.ModelAdmin):
+    """Read-only, for support. Shows only that a code was sent, never the code."""
+
+    list_display = ("email", "purpose", "created_at", "expires_at", "failed_attempts", "used_at")
+    list_filter = ("purpose",)
+    search_fields = ("email",)
+    exclude = ("code_hash",)
+
+    def has_module_permission(self, request):
+        return request.user.is_superuser
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False

@@ -1,0 +1,36 @@
+{% comment %}
+  Scrollable, searchable multi-select of quarters, with each quarter's EMD and
+  a running total (applications/static/applications/quarter_picker.js).
+  Expects: form (with .open_auctions, .selected_ids and a "quarters" field).
+  Without JavaScript it still works as plain checkboxes; the total is then not shown.
+{% endcomment %}
+{% load humanize %}
+<label for="quarter-search">Quarters (select as many as you like; you can be allotted at most {{ MAX_QUARTERS_PER_APPLICANT }})</label>
+{{ form.quarters.errors }}
+{% if form.open_auctions %}
+  <input id="quarter-search" class="picker-search" type="text" placeholder="Search by quarter no., sector, location or type" autocomplete="off">
+  <div class="picker table-wrap">
+    <table class="data">
+      <thead><tr><th></th><th>Quarter</th><th>Locality</th><th>Bidding slot</th><th class="num">Base rate<br><small>Rs.</small></th><th class="num">EMD<br><small>Rs.</small></th></tr></thead>
+      <tbody>
+      {% with selected=form.selected_ids %}
+      {% for a in form.open_auctions %}
+        <tr class="picker-row" data-search="{{ a.quarter.quarter_no }} {{ a.quarter.locality }} {{ a.quarter.get_quarter_type_display }} {{ a.quarter.floor }}">
+          <td><input type="checkbox" name="quarters" value="{{ a.quarter.pk }}" id="q{{ a.quarter.pk }}"
+                     data-emd="{{ a.quarter.emd_amount }}" {% if a.quarter.pk in selected %}checked{% endif %}></td>
+          <td><label for="q{{ a.quarter.pk }}"><strong>{{ a.quarter.quarter_no }}</strong><br><small class="muted">{{ a.quarter.get_quarter_type_display }}, {{ a.quarter.floor }}</small></label></td>
+          <td class="wrap">{{ a.quarter.locality }}</td>
+          <td><small>{{ a.start_time|date:"d M Y, H:i" }}</small></td>
+          <td class="num">{{ a.quarter.base_rate|floatformat:"-2"|intcomma }}</td>
+          <td class="num">{{ a.quarter.emd_amount|floatformat:"-2"|intcomma }}</td>
+        </tr>
+      {% endfor %}
+      {% endwith %}
+      </tbody>
+    </table>
+  </div>
+  <div class="picker-total" id="emd-total" hidden></div>
+{% else %}
+  <p class="muted">No quarters are open for applications right now (applications close
+    {{ APPLICATION_CLOSES_HOURS_BEFORE_AUCTION }} hours before each bidding slot).</p>
+{% endif %}

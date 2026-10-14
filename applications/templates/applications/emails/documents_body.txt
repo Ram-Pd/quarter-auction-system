@@ -1,0 +1,22 @@
+{% autoescape off %}Dear {{ applicant.name }},
+
+Thank you for registering for bidding in the {{ AUCTION_TITLE }}.
+
+Application number: {{ applicant.application_no }}
+
+Quarters you applied for, with the EMD to pay for each:
+{% for a in applications %}  {{ a.quarter.quarter_no }}  ({{ a.quarter.sector }}, {{ a.quarter.location_block }})  EMD Rs. {{ a.emd_amount|floatformat:"2g" }}
+{% endfor %}  Total EMD: Rs. {{ total_emd|floatformat:"2g" }}
+
+Two documents are attached:
+  1. Auction Application Form
+  2. Auction Intimation Slip - your URN and the SBI Collect payment instructions
+
+Next steps:
+  - Pay the EMD for each quarter through SBI Collect, using the URN on the Intimation Slip.
+  - Bring your original documents and the payment receipts to the auction office.
+  - After the office verifies them, you can bid on the quarters whose EMD was verified.
+    Log in to the auction website to see your status.
+
+Keep your URN confidential.
+{% include "emails/training_footer.txt" %}{% endautoescape %}

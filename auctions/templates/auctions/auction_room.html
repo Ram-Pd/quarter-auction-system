@@ -4,7 +4,7 @@
 {% block main_class %}wide{% endblock %}
 
 {% block content %}
-<p><a href="{% url 'auctions:lobby' %}">&larr; Back to lobby</a></p>
+<p><a href="{% if user.is_authenticated %}{% url 'auctions:listing' %}{% else %}{% url 'home' %}{% endif %}">&larr; Back to the quarter list</a></p>
 
 <div class="room">
   {# ---------------- left: quarter details + live status ---------------- #}
@@ -12,30 +12,39 @@
     <div class="card">
       <h1>Quarter {{ auction.quarter.quarter_no }}</h1>
       <table class="details">
-        <tr><th>Sector / location</th><td>{{ auction.quarter.sector }}, {{ auction.quarter.location_block }}</td></tr>
+        <tr><th>Locality</th><td>{{ auction.quarter.locality }}</td></tr>
         <tr><th>Type</th><td>{{ auction.quarter.get_quarter_type_display }}</td></tr>
         <tr><th>Floor</th><td>{{ auction.quarter.floor }}</td></tr>
         <tr><th>Area</th><td>{{ auction.quarter.area_sqft|floatformat:0|intcomma }} sq ft</td></tr>
-        <tr><th>Base rate</th><td>Rs. {{ auction.quarter.base_rate|floatformat:2|intcomma }}</td></tr>
-        <tr><th>Minimum increment</th><td>Rs. {{ auction.min_increment|floatformat:2|intcomma }}</td></tr>
-        <tr><th>Starts</th><td>{{ auction.start_time|date:"d M Y, H:i" }}</td></tr>
-        <tr><th>Scheduled end</th><td>{{ auction.original_end_time|date:"d M Y, H:i" }}</td></tr>
+        <tr><th>Base rate</th><td>Rs. {{ auction.quarter.base_rate|floatformat:"-2"|intcomma }}</td></tr>
+        <tr><th>EMD</th><td>Rs. {{ auction.quarter.emd_amount|floatformat:"-2"|intcomma }}</td></tr>
+        <tr><th>Bid step</th><td>Rs. {{ auction.bid_step|floatformat:0|intcomma }}
+          <small class="muted">({{ auction.increment_percent|floatformat:"-2" }}% of base rate)</small></td></tr>
+        <tr><th>Bidding slot</th><td>{{ auction.start_time|date:"d M Y, H:i" }} &ndash; {{ auction.original_end_time|date:"H:i" }}
+          ({{ auction.duration_minutes }} min)</td></tr>
+        {% if auction.anti_snipe_seconds %}
+          <tr><th>Anti-sniping</th><td>A bid in the last {{ auction.anti_snipe_seconds }} s extends the deadline</td></tr>
+        {% endif %}
       </table>
     </div>
 
-    {# Final result: shown once the auction is closed or cancelled (auction_room.js keeps it current). #}
+    {# Final result, published here once the auction is closed (auction_room.js keeps it current). #}
     <div id="result" class="card result-panel" {% if not initial_state.result %}hidden{% endif %}>
       {% with r=initial_state.result %}
         {% if r.outcome == "won" %}
-          {% if participation and r.bidder == participation.anonymous_code %}
+          {% if your_code and r.bidder == your_code %}
             <h2>Congratulations, you won!</h2>
-            <p>Your bid of <strong>Rs. {{ r.amount|floatformat:2|intcomma }}</strong> was the highest. Details have been emailed to you.</p>
+            <p>Your bid of <strong>Rs. {{ r.amount|intcomma }}</strong> won this quarter. Details have been emailed to you.</p>
           {% else %}
             <h2>Auction closed</h2>
-            <p>Won by <strong>{{ r.bidder }}</strong> with <strong>Rs. {{ r.amount|floatformat:2|intcomma }}</strong>.</p>
+            <p>Won by <strong>{{ r.bidder }}</strong> with <strong>Rs. {{ r.amount|intcomma }}</strong>.</p>
           {% endif %}
+          <p class="muted">Total bids: {{ r.total_bids }}</p>
         {% elif r.outcome == "no_bids" %}
-          <h2>Auction closed</h2><p>No valid bids were placed. The quarter remains vacant.</p>
+          <h2>Auction closed</h2><p>No bids were placed. The quarter remains vacant.</p>
+        {% elif r.outcome == "no_valid_winner" %}
+          <h2>Auction closed</h2><p>No valid winner: no bidder could be allotted this quarter. The quarter remains vacant.</p>
+          <p class="muted">Total bids: {{ r.total_bids }}</p>
         {% elif r.outcome == "cancelled" %}
           <h2>Auction cancelled</h2><p>This auction was cancelled by the auction office.</p>
         {% endif %}
@@ -49,12 +58,13 @@
       </div>
       <div class="live-row">
         <div><div class="muted">Highest bid</div>
-          <div id="highest" class="big">{% if auction.current_highest_bid %}Rs. {{ auction.current_highest_bid|floatformat:2|intcomma }}{% else %}No bids yet{% endif %}</div></div>
+          <div id="highest" class="big">{% if auction.current_highest_bid %}Rs. {{ auction.current_highest_bid|floatformat:"-2"|intcomma }}{% else %}No bids yet{% endif %}</div></div>
         <div id="minimum-block" {% if initial_state.result %}hidden{% endif %}><div class="muted">Minimum next bid</div>
-          <div id="minimum" class="big">Rs. {{ auction.minimum_next_bid|floatformat:2|intcomma }}</div></div>
+          <div id="minimum" class="big">Rs. {{ auction.minimum_next_bid|floatformat:0|intcomma }}</div></div>
       </div>
-      <div id="extended-note" class="muted" hidden>Deadline extended because of a last-minute bid.</div>
+      <div id="extended-note" class="muted" hidden>Deadline extended because of a last-moment bid.</div>
       <div class="muted">Deadline: <span id="deadline">{{ auction.end_time|date:"d M Y, H:i:s" }}</span>
+        &middot; Bids: <span id="total-bids">{{ auction.total_bids }}</span>
         &middot; <span id="connection" class="conn conn-wait">Connecting&hellip;</span></div>
     </div>
   </div>
@@ -62,44 +72,38 @@
   {# ---------------- right: bidding + history ---------------- #}
   <div>
     <div class="card">
-      {% if participation %}
+      {% if can_bid %}
         <div id="bidding-closed" {% if not initial_state.result %}hidden{% endif %}>
           <h2>Bidding closed</h2>
           <p class="muted">You were <strong>{{ participation.anonymous_code }}</strong> in this auction.</p>
         </div>
         <div id="bid-panel" {% if initial_state.result %}hidden{% endif %}>
-        <h2>Place a bid</h2>
-        {% if bidding_elsewhere %}
-          <div class="alert alert-err">You are already bidding for quarter
-            <strong>{{ bidding_elsewhere.quarter.quarter_no }}</strong>
-            (<a href="{% url 'auctions:auction_room' bidding_elsewhere.pk %}">open it</a>).
-            You can bid here only after that auction has ended. One quarter at a time.</div>
-        {% endif %}
-        <p class="muted">You are <strong id="you">{{ participation.anonymous_code }}</strong> in this auction.
-          Other bidders only see this code.</p>
-        <form id="bid-form" novalidate>
-          <label for="bid-amount">Your bid (Rs.)</label>
-          <input id="bid-amount" type="text" inputmode="decimal" autocomplete="off"
-                 value="{{ auction.minimum_next_bid|floatformat:2 }}">
-          <button id="bid-button" type="submit" class="btn" disabled>Place bid</button>
-          <button id="bid-min" type="button" class="btn btn-secondary" disabled>Use minimum</button>
-        </form>
+          <h2>Place a bid</h2>
+          <p class="muted">You are <strong id="you">{{ participation.anonymous_code }}</strong> in this auction.
+            Other bidders only see this code.</p>
+          <div class="muted">Quick bid (steps over the current highest bid):</div>
+          <div id="quick-bids" class="quick-bids">
+            {% for q in initial_state.quick_bids %}
+              <button type="button" class="btn btn-secondary quick-bid" data-steps="{{ q.steps }}" disabled>+{{ q.steps }} step{{ q.steps|pluralize }}: Rs. {{ q.amount|intcomma }}</button>
+            {% endfor %}
+          </div>
+          <form id="bid-form" novalidate>
+            <label for="bid-amount">Or type your bid (Rs., whole rupees)</label>
+            <input id="bid-amount" type="text" inputmode="numeric" autocomplete="off"
+                   value="{{ auction.minimum_next_bid|floatformat:0 }}">
+            <button id="bid-button" type="submit" class="btn" disabled>Place bid</button>
+          </form>
         </div>
         <div id="bid-message" class="bid-message" role="status" aria-live="polite"></div>
-      {% elif can_join %}
-        <h2>Join this auction</h2>
-        <p>To bid, join the auction. You will get an anonymous code such as "Bidder 3" for this
-          auction only; other bidders never see your name.</p>
-        <form method="post" action="{% url 'auctions:join' auction.pk %}">
-          {% csrf_token %}
-          <button type="submit" class="btn">Join auction</button>
-        </form>
-      {% elif is_watcher %}
-        <h2>Watching</h2>
-        <p class="muted">You are viewing as staff. Staff accounts cannot bid.</p>
+      {% elif your_code %}
+        <h2>Bidding</h2>
+        <p class="muted">You were <strong>{{ your_code }}</strong> in this auction.</p>
+        {% if not_eligible_reason %}<p class="muted">{{ not_eligible_reason }}</p>{% endif %}
       {% else %}
-        <h2>Bidding closed</h2>
-        <p class="muted">This auction is not open for joining.</p>
+        <h2>Watching</h2>
+        <p class="muted">{{ not_eligible_reason|default:"You are viewing this auction." }}
+          You can watch the bidding live, but you cannot bid.</p>
+        {% if not user.is_authenticated %}<a class="btn btn-small" href="{% url 'accounts:login' %}?next={{ request.path }}">Login</a>{% endif %}
       {% endif %}
     </div>
 
@@ -111,7 +115,7 @@
           <thead><tr><th>Time</th><th>Bidder</th><th class="num">Amount (Rs.)</th></tr></thead>
           <tbody id="bids">
             {% for b in initial_state.bids %}
-              <tr><td>{{ b.time|slice:"11:19" }}</td><td>{{ b.bidder }}</td><td class="num">{{ b.amount }}</td></tr>
+              <tr><td>{{ b.time|slice:"11:19" }}</td><td>{{ b.bidder }}</td><td class="num">{{ b.amount|intcomma }}</td></tr>
             {% empty %}
               <tr class="empty"><td colspan="3" class="muted">No bids yet.</td></tr>
             {% endfor %}
@@ -124,10 +128,7 @@
 {% endblock %}
 
 {% block scripts %}
-  {% if participation or is_watcher %}
-    {# PRIVACY: initial_state is built by auctions/realtime.py: codes and amounts only. #}
-    {{ initial_state|json_script:"initial-state" }}
-    <script src="{% static 'auctions/auction_room.js' %}"
-            data-ws-path="/ws/auctions/{{ auction.pk }}/"></script>
-  {% endif %}
+  {# PRIVACY: initial_state is built by auctions/realtime.py: codes and amounts only. #}
+  {{ initial_state|json_script:"initial-state" }}
+  <script src="{% static 'auctions/auction_room.js' %}" data-ws-path="/ws/auctions/{{ auction.pk }}/"></script>
 {% endblock %}

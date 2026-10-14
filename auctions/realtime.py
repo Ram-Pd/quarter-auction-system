@@ -2,7 +2,7 @@
 Everything that is SENT TO BROWSERS about an auction is built in this file.
 
 PRIVACY RULE: messages contain only anonymous codes ("Bidder 7"), amounts and
-times. Never a name, email, URN, mobile or any other applicant field. Keeping
+times. Never a name, email, phone, URN, Aadhaar, PAN or any other applicant field. Keeping
 all message building here makes that rule easy to check (and it is tested).
 """
 from asgiref.sync import async_to_sync
@@ -19,7 +19,10 @@ def group_name(auction_id):
 
 
 def _money(value):
-    return None if value is None else f"{value:.2f}"
+    """Decimal -> "45090" (whole rupees) or "45090.50" (if the base rate has paise)."""
+    if value is None:
+        return None
+    return f"{value:.0f}" if value == value.to_integral_value() else f"{value:.2f}"
 
 
 def _time(value):
@@ -37,13 +40,15 @@ def public_bid(bid):
 
 def auction_result(auction):
     """The final result as the public may see it: code and amount, never a name."""
-    if auction.status == Auction.Status.CLOSED:
+    if auction.status == Auction.Status.CLOSED_WON:
         return {"outcome": "won", "bidder": auction.winning_bid.participation.anonymous_code,
-                "amount": _money(auction.winning_bid.amount)}
+                "amount": _money(auction.winning_bid.amount), "total_bids": auction.total_bids}
     if auction.status == Auction.Status.CLOSED_NO_BIDS:
-        return {"outcome": "no_bids"}
+        return {"outcome": "no_bids", "total_bids": 0}
+    if auction.status == Auction.Status.CLOSED_NO_VALID_WINNER:
+        return {"outcome": "no_valid_winner", "total_bids": auction.total_bids}
     if auction.status == Auction.Status.CANCELLED:
-        return {"outcome": "cancelled"}
+        return {"outcome": "cancelled", "total_bids": auction.total_bids}
     return None
 
 
@@ -56,7 +61,9 @@ def auction_state(auction):
         "result": auction_result(auction),
         "highest_bid": _money(auction.current_highest_bid),
         "minimum_next_bid": _money(auction.minimum_next_bid),
-        "min_increment": _money(auction.min_increment),
+        "bid_step": _money(auction.bid_step),
+        "quick_bids": [{"steps": n, "amount": _money(amount)} for n, amount in auction.quick_bid_amounts()],
+        "total_bids": auction.total_bids,
         "start_time": _time(auction.start_time),
         "end_time": _time(auction.end_time),
         "server_now": _time(timezone.now()),  # lets the browser correct its clock

@@ -8,8 +8,7 @@ class QuarterImportForm(forms.Form):
     file = forms.FileField(
         label="Excel file (.xlsx)",
         validators=[FileExtensionValidator(["xlsx"])],
-        help_text=f"Maximum {MAX_UPLOAD_MB} MB. Columns: Quarter No | Sector | Location / Block | "
-                  "Type | Floor | Area (sq ft) | Base Rate (Rs.) | Status",
+        help_text=f"Maximum {MAX_UPLOAD_MB} MB. Each row creates a quarter and its auction slot.",
     )
 
     def clean_file(self):

@@ -46,7 +46,10 @@
     <p>
       The first row must contain exactly these headers, in this order:<br>
       <code>{{ expected_headers|join:" | " }}</code><br>
-      Blank rows are skipped. The import is all-or-nothing: if any row has an error, no quarters are saved.
+      Each row creates a quarter AND its auction (bidding slot). Dates and times are India time;
+      Excel date/time cells and text such as <code>15-11-2026</code> / <code>10:30</code> both work.
+      A blank Duration uses the default ({{ default_duration }} minutes).
+      Blank rows are skipped. The import is all-or-nothing: if any row has an error, nothing is saved.
     </p>
     <div class="submit-row">
       <input type="submit" value="Upload and import" class="default">

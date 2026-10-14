@@ -1,0 +1,22 @@
+{% comment %}
+  FAQ: the one place this text lives (shown on the home page).
+  PLACEHOLDER wording, pending mentor confirmation. NOT official SAIL policy.
+{% endcomment %}
+<details><summary>Do I need an account to see the quarters?</summary>
+  <p>No. The quarter list, bidding slots and results are public. You need an account to register for bidding and to bid.</p></details>
+<details><summary>Why do I have to confirm my email?</summary>
+  <p>All documents and results are sent by email. We send a 6-digit code, valid for {{ OTP_VALID_MINUTES }} minutes, to make sure the address is yours.</p></details>
+<details><summary>Can I apply for more quarters later?</summary>
+  <p>Yes, until {{ APPLICATION_CLOSES_HOURS_BEFORE_AUCTION }} hours before that quarter's bidding slot starts. You get a supplementary Intimation Slip for the added quarters only.</p></details>
+<details><summary>How much is the EMD?</summary>
+  <p>Each quarter has its own EMD amount, shown in the quarter list and on your Intimation Slip. Pay it separately for each quarter.</p></details>
+<details><summary>When can I start bidding?</summary>
+  <p>When the auction office has checked your documents (your status becomes Active) and verified the EMD receipt for that quarter. Your status is shown after you log in.</p></details>
+<details><summary>What is a bid step?</summary>
+  <p>The minimum raise: {{ DEFAULT_INCREMENT_PERCENT|floatformat:"-2" }}% of the base rate. For a base rate of Rs. 45,000 the step is Rs. 90. Quick buttons bid +1, +2 or +5 steps; you can also type any higher amount.</p></details>
+<details><summary>What happens if my internet drops during bidding?</summary>
+  <p>The page reconnects automatically and refreshes the highest bid and the time left. A bid is only placed when the page says it was accepted.</p></details>
+<details><summary>Will other bidders know who I am?</summary>
+  <p>No. Everyone sees only codes such as "Bidder 3". Your Aadhaar and PAN are stored encrypted and shown only masked.</p></details>
+<details><summary>What if nobody bids on a quarter?</summary>
+  <p>The quarter stays vacant and may be auctioned again later.</p></details>

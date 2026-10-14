@@ -9,11 +9,12 @@ from datetime import timedelta
 from asgiref.sync import sync_to_async
 from channels.routing import URLRouter
 from channels.testing import WebsocketCommunicator
-from django.contrib.auth.models import AnonymousUser, User
+from django.contrib.auth.models import AnonymousUser
 from django.test import TransactionTestCase, override_settings
 from django.utils import timezone
 
-from accounts.tests.factories import make_activated_applicant
+from accounts.models import User
+from applications.tests.factories import make_applicant
 from auctions.models import Auction, Bid
 from auctions.routing import websocket_urlpatterns
 from auctions.tests.factories import make_auction, make_bidder, make_quarter
@@ -36,22 +37,31 @@ def bid_message(amount):
 class ConsumerTests(TransactionTestCase):
 
     def setUp(self):
-        self.auction = make_auction()  # live, base rate 4500, increment 100
+        self.auction = make_auction()  # live, base rate 45,000, step 90
         self.a, self.user_a, _ = make_bidder(self.auction, 1)  # Bidder 1
         self.b, self.user_b, _ = make_bidder(self.auction, 2)  # Bidder 2
 
     # ---------------------------------------------------------- authorisation
 
-    async def test_anonymous_user_rejected(self):
-        connected, code = await tab(AnonymousUser(), self.auction).connect()
-        self.assertFalse(connected)
-        self.assertEqual(code, 4401)
+    async def assert_watch_only(self, user):
+        communicator = tab(user, self.auction)
+        connected, _ = await communicator.connect()
+        self.assertTrue(connected)                                   # may watch...
+        self.assertIsNone((await communicator.receive_json_from())["you"])
+        await communicator.send_json_to(bid_message("45000"))        # ...but not bid
+        result = await communicator.receive_json_from()
+        self.assertEqual((result["type"], result["ok"]), ("bid_result", False))
+        self.assertIn("not eligible", result["message"])
+        self.assertEqual(await sync_to_async(Bid.objects.count)(), 0)
+        await communicator.disconnect()
 
-    async def test_applicant_who_has_not_joined_rejected(self):
-        _, outsider = await sync_to_async(make_activated_applicant)(3)
-        connected, code = await tab(outsider, self.auction).connect()
-        self.assertFalse(connected)
-        self.assertEqual(code, 4403)
+    async def test_anonymous_visitor_can_watch_but_not_bid(self):
+        await self.assert_watch_only(AnonymousUser())
+
+    async def test_applicant_not_eligible_for_this_quarter_can_only_watch(self):
+        # Applied for this quarter, but not verified/active: no bidding right.
+        applicant = await sync_to_async(make_applicant)(3, [self.auction.quarter])
+        await self.assert_watch_only(await sync_to_async(lambda: applicant.user)())
 
     async def test_unknown_auction_rejected(self):
         communicator = WebsocketCommunicator(application, "/ws/auctions/999999/")
@@ -67,21 +77,16 @@ class ConsumerTests(TransactionTestCase):
         self.assertEqual(snapshot["type"], "snapshot")
         self.assertEqual(snapshot["you"], "Bidder 1")
         self.assertEqual(snapshot["phase"], "LIVE")
-        self.assertEqual(snapshot["minimum_next_bid"], "4500.00")
+        self.assertEqual(snapshot["minimum_next_bid"], "45000")
+        self.assertEqual(snapshot["bid_step"], "90")
+        self.assertEqual(snapshot["quick_bids"], [{"steps": 1, "amount": "45000"}, {"steps": 2, "amount": "45090"},
+                                                  {"steps": 5, "amount": "45360"}])
         self.assertEqual(snapshot["bids"], [])
         await communicator.disconnect()
 
     async def test_staff_can_watch_but_not_bid(self):
-        staff = await sync_to_async(User.objects.create_user)("staff", password="x", is_staff=True)
-        communicator = tab(staff, self.auction)
-        connected, _ = await communicator.connect()
-        self.assertTrue(connected)
-        self.assertIsNone((await communicator.receive_json_from())["you"])
-        await communicator.send_json_to(bid_message("4500"))
-        result = await communicator.receive_json_from()
-        self.assertEqual((result["type"], result["ok"]), ("bid_result", False))
-        self.assertEqual(await sync_to_async(Bid.objects.count)(), 0)
-        await communicator.disconnect()
+        staff = await sync_to_async(User.objects.create_user)("staff@example.com", password="x", is_staff=True)
+        await self.assert_watch_only(staff)
 
     # ---------------------------------------------------------- bidding
 
@@ -92,7 +97,7 @@ class ConsumerTests(TransactionTestCase):
         await tab_a.receive_json_from()  # snapshots
         await tab_b.receive_json_from()
 
-        message = bid_message("4500")
+        message = bid_message("45000")
         await tab_a.send_json_to(message)
         # Bidder A's tab gets its personal result AND the broadcast (either order).
         a_msgs = [await tab_a.receive_json_from(), await tab_a.receive_json_from()]
@@ -104,17 +109,19 @@ class ConsumerTests(TransactionTestCase):
         b_msg = await tab_b.receive_json_from()
         self.assertEqual(b_msg["type"], "bid_accepted")
         self.assertEqual(b_msg["bid"]["bidder"], "Bidder 1")
-        self.assertEqual(b_msg["bid"]["amount"], "4500.00")
-        self.assertEqual(b_msg["highest_bid"], "4500.00")
-        self.assertEqual(b_msg["minimum_next_bid"], "4600.00")
+        self.assertEqual(b_msg["bid"]["amount"], "45000")
+        self.assertEqual(b_msg["highest_bid"], "45000")
+        self.assertEqual(b_msg["minimum_next_bid"], "45090")
+        self.assertEqual(b_msg["quick_bids"][2], {"steps": 5, "amount": "45450"})
+        self.assertEqual(b_msg["total_bids"], 1)
         self.assertIn("end_time", b_msg)
         self.assertIn("server_now", b_msg)
         self.assertTrue(await tab_b.receive_nothing())
 
         # PRIVACY: nothing identifying in any message.
         everything = json.dumps(a_msgs + [b_msg])
-        for private in [self.a.name, self.a.email, self.a.urn, self.a.mobile, self.a.application_no,
-                        self.b.name, self.b.urn, self.user_a.username]:
+        for private in [self.a.name, self.a.email, self.a.urn, self.a.phone, self.a.application_no,
+                        self.a.aadhaar_last4, self.a.pan_last4, self.b.name, self.b.urn, self.user_a.email]:
             self.assertNotIn(private, everything)
 
         await tab_a.disconnect()
@@ -131,7 +138,7 @@ class ConsumerTests(TransactionTestCase):
         result = await tab_a.receive_json_from()
         self.assertEqual(result["type"], "bid_result")
         self.assertFalse(result["ok"])
-        self.assertIn("at least Rs. 4,500.00", result["message"])
+        self.assertIn("at least Rs. 45,000", result["message"])
         self.assertTrue(await tab_b.receive_nothing())
         await tab_a.disconnect()
         await tab_b.disconnect()
@@ -140,7 +147,7 @@ class ConsumerTests(TransactionTestCase):
         communicator = tab(self.user_a, self.auction)
         await communicator.connect()
         await communicator.receive_json_from()
-        await communicator.send_json_to(bid_message("4500"))
+        await communicator.send_json_to(bid_message("45000"))
         await communicator.receive_json_from()
         await communicator.receive_json_from()
 
@@ -148,7 +155,7 @@ class ConsumerTests(TransactionTestCase):
         await communicator.send_json_to({"type": "sync"})
         snapshot = await communicator.receive_json_from()
         self.assertEqual(snapshot["type"], "snapshot")
-        self.assertEqual(snapshot["highest_bid"], "4500.00")
+        self.assertEqual(snapshot["highest_bid"], "45000")
         self.assertEqual([b["bidder"] for b in snapshot["bids"]], ["Bidder 1"])
         await communicator.disconnect()
 
@@ -161,7 +168,7 @@ class ConsumerTests(TransactionTestCase):
         await tab_a.receive_json_from()
         await tab_c.receive_json_from()
 
-        await tab_a.send_json_to(bid_message("4500"))
+        await tab_a.send_json_to(bid_message("45000"))
         await tab_a.receive_json_from()
         await tab_a.receive_json_from()
         self.assertTrue(await tab_c.receive_nothing())  # watcher of the OTHER auction hears nothing
@@ -183,7 +190,7 @@ class ConsumerTests(TransactionTestCase):
         await communicator.receive_json_from()
         await communicator.send_json_to(bid_message("100"))   # first attempt (rejected: too low)
         await communicator.receive_json_from()
-        await communicator.send_json_to(bid_message("4500"))  # second attempt within 60 s
+        await communicator.send_json_to(bid_message("45000"))  # second attempt within 60 s
         result = await communicator.receive_json_from()
         self.assertIn("too fast", result["message"])
         await communicator.disconnect()
@@ -203,7 +210,7 @@ class ConsumerTests(TransactionTestCase):
         await tab_b.connect()
         await tab_a.receive_json_from()
         await tab_b.receive_json_from()
-        await tab_a.send_json_to(bid_message("4500"))
+        await tab_a.send_json_to(bid_message("45000"))
         await tab_a.receive_json_from()
         await tab_a.receive_json_from()
         await tab_b.receive_json_from()
@@ -217,7 +224,8 @@ class ConsumerTests(TransactionTestCase):
         b_msgs = [await tab_b.receive_json_from(), await tab_b.receive_json_from()]
         snapshot = next(m for m in b_msgs if m["type"] == "snapshot")
         self.assertEqual(snapshot["phase"], "CLOSED")
-        self.assertEqual(snapshot["result"], {"outcome": "won", "bidder": "Bidder 1", "amount": "4500.00"})
+        self.assertEqual(snapshot["result"], {"outcome": "won", "bidder": "Bidder 1", "amount": "45000",
+                                              "total_bids": 1})
 
         # Bidder A (the winner) is told too, without asking.
         pushed = await tab_a.receive_json_from()
@@ -227,3 +235,23 @@ class ConsumerTests(TransactionTestCase):
 
         await tab_a.disconnect()
         await tab_b.disconnect()
+
+
+@override_settings(AUCTION_BID_MIN_INTERVAL_SECONDS=0)
+class EligibilityChangeTests(TransactionTestCase):
+    async def test_suspension_takes_effect_on_an_open_connection(self):
+        from applications import services
+        from applications.tests.factories import make_officer
+
+        auction = await sync_to_async(make_auction)()
+        applicant, user, _ = await sync_to_async(make_bidder)(auction, 1)
+        communicator = tab(user, auction)
+        await communicator.connect()
+        self.assertEqual((await communicator.receive_json_from())["you"], "Bidder 1")
+        officer = await sync_to_async(make_officer)()
+        await sync_to_async(services.suspend)(applicant, officer, "Dispute")
+        await communicator.send_json_to(bid_message("45000"))
+        result = await communicator.receive_json_from()
+        self.assertFalse(result["ok"])
+        self.assertIn("not active", result["message"])
+        await communicator.disconnect()
